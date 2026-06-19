@@ -6,18 +6,28 @@ import { sendZaloText } from "@/lib/zalo/client";
 export const runtime = "nodejs";
 
 type ZaloWebhook = {
-  event_name?: string;
-  timestamp?: string | number;
-  sender?: { id?: string };
-  user_id_by_app?: string;
-  message?: {
-    msg_id?: string;
-    text?: string;
-    attachments?: Array<{
-      type?: string;
-      payload?: { url?: string; thumbnail?: string };
-    }>;
+  ok?: boolean;
+  result?: {
+    event_name?: string;
+    message?: ZaloMessage;
   };
+};
+
+type ZaloMessage = {
+  from?: {
+    id?: string;
+    display_name?: string;
+    is_bot?: boolean;
+  };
+  chat?: {
+    id?: string;
+    chat_type?: "PRIVATE" | "GROUP";
+  };
+  message_id?: string;
+  date?: number;
+  text?: string;
+  photo?: string;
+  caption?: string;
 };
 
 function webhookAuthorized(request: Request) {
@@ -35,14 +45,8 @@ function webhookAuthorized(request: Request) {
   return received === configured;
 }
 
-function senderId(payload: ZaloWebhook) {
-  return payload.sender?.id || payload.user_id_by_app || "";
-}
-
-function firstImageUrl(payload: ZaloWebhook) {
-  return payload.message?.attachments?.find(
-    (attachment) => attachment.type === "image"
-  )?.payload?.url;
+function webhookMessage(payload: ZaloWebhook) {
+  return payload.result?.message;
 }
 
 function currentBillingMonth() {
@@ -147,7 +151,11 @@ async function confirmLatest(userId: string, accepted: boolean) {
   );
 }
 
-async function processImage(payload: ZaloWebhook, userId: string, imageUrl: string) {
+async function processImage(
+  message: ZaloMessage,
+  userId: string,
+  imageUrl: string
+) {
   const admin = createAdminClient();
   const { data: link } = await admin
     .from("zalo_room_links")
@@ -170,7 +178,7 @@ async function processImage(payload: ZaloWebhook, userId: string, imageUrl: stri
       contract_id: link.contract_id,
       room_id: link.room_id,
       zalo_user_id: userId,
-      zalo_message_id: payload.message?.msg_id ?? null,
+      zalo_message_id: message.message_id ?? null,
       billing_month: currentBillingMonth(),
       status: "processing",
     })
@@ -284,16 +292,21 @@ async function processImage(payload: ZaloWebhook, userId: string, imageUrl: stri
 }
 
 async function processWebhook(payload: ZaloWebhook) {
-  const userId = senderId(payload);
-  if (!userId) return;
+  const message = webhookMessage(payload);
+  const userId = message?.chat?.id || message?.from?.id || "";
+  if (!message || !userId) return;
 
-  const text = payload.message?.text?.trim() ?? "";
+  const text = message.text?.trim() ?? message.caption?.trim() ?? "";
   if (text && (await handleLinkCommand(userId, text))) return;
   if (/^OK$/i.test(text)) return confirmLatest(userId, true);
   if (/^SAI$/i.test(text)) return confirmLatest(userId, false);
 
-  const imageUrl = firstImageUrl(payload);
-  if (imageUrl) return processImage(payload, userId, imageUrl);
+  if (message.photo) return processImage(message, userId, message.photo);
+
+  await sendZaloText(
+    userId,
+    "Xin chào! Để liên kết phòng, hãy gửi:\nLIENKET <mã hợp đồng> <4 số cuối SĐT>\n\nSau khi liên kết, bạn có thể gửi ảnh công tơ điện hoặc nước."
+  );
 }
 
 export async function GET(request: Request) {

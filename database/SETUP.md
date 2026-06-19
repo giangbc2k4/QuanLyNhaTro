@@ -165,9 +165,6 @@ SUPABASE_SECRET_KEY=sb_secret_REPLACE_ME
 
 ZALO_BOT_TOKEN=REPLACE_ME
 ZALO_WEBHOOK_SECRET=mot_chuoi_ngau_nhien_dai
-
-# Điền endpoint gửi tin được cung cấp trong tài liệu của loại Zalo Bot đang dùng.
-ZALO_SEND_MESSAGE_URL=
 ```
 
 Không đặt `SUPABASE_SECRET_KEY` hoặc token Zalo trong biến `NEXT_PUBLIC_`.

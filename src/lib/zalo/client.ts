@@ -1,28 +1,46 @@
-export async function sendZaloText(userId: string, text: string) {
-  const botToken =
-    process.env.ZALO_BOT_TOKEN || process.env.ZALO_OA_ACCESS_TOKEN;
-  const endpoint = process.env.ZALO_SEND_MESSAGE_URL;
-  if (!botToken || !endpoint) {
-    console.warn(
-      "Zalo message skipped: missing ZALO_BOT_TOKEN or ZALO_SEND_MESSAGE_URL."
-    );
-    return;
+type ZaloBotResponse<T> = {
+  ok: boolean;
+  result?: T;
+  description?: string;
+  error_code?: number;
+};
+
+function botApiUrl(method: string) {
+  const botToken = process.env.ZALO_BOT_TOKEN;
+  if (!botToken) {
+    throw new Error("Server chưa cấu hình ZALO_BOT_TOKEN.");
   }
 
-  const response = await fetch(endpoint, {
+  return `https://bot-api.zaloplatforms.com/bot${botToken}/${method}`;
+}
+
+export async function sendZaloText(chatId: string, text: string) {
+  const response = await fetch(botApiUrl("sendMessage"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${botToken}`,
     },
     body: JSON.stringify({
-      recipient: { user_id: userId },
-      message: { text },
+      chat_id: chatId,
+      text: text.slice(0, 2000),
     }),
     signal: AbortSignal.timeout(15_000),
   });
 
   if (!response.ok) {
-    throw new Error(`Zalo gửi tin thất bại: HTTP ${response.status}`);
+    throw new Error(`Zalo gửi tin thất bại: HTTP ${response.status}.`);
   }
+
+  const body = (await response.json()) as ZaloBotResponse<{
+    message_id: string;
+    date: number;
+  }>;
+  if (!body.ok) {
+    throw new Error(
+      body.description ||
+        `Zalo gửi tin thất bại${body.error_code ? ` (${body.error_code})` : ""}.`
+    );
+  }
+
+  return body.result;
 }
