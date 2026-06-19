@@ -11,6 +11,8 @@ type ZaloWebhook = {
     event_name?: string;
     message?: ZaloMessage;
   };
+  event_name?: string;
+  message?: ZaloMessage;
 };
 
 type ZaloMessage = {
@@ -46,7 +48,11 @@ function webhookAuthorized(request: Request) {
 }
 
 function webhookMessage(payload: ZaloWebhook) {
-  return payload.result?.message;
+  return payload.result?.message ?? payload.message;
+}
+
+function webhookEventName(payload: ZaloWebhook) {
+  return payload.result?.event_name ?? payload.event_name ?? null;
 }
 
 function currentBillingMonth() {
@@ -298,7 +304,7 @@ async function processWebhook(payload: ZaloWebhook) {
     JSON.stringify({
       level: "info",
       message: "zalo_webhook_parsed",
-      eventName: payload.result?.event_name ?? null,
+      eventName: webhookEventName(payload),
       hasMessage: Boolean(message),
       hasChatId: Boolean(userId),
       hasText: Boolean(message?.text),
@@ -359,7 +365,19 @@ export async function POST(request: Request) {
     JSON.stringify({
       level: "info",
       message: "zalo_webhook_received",
-      eventName: payload.result?.event_name ?? null,
+      eventName: webhookEventName(payload),
+      topLevelKeys: Object.keys(payload).slice(0, 10),
+      resultKeys:
+        payload.result && typeof payload.result === "object"
+          ? Object.keys(payload.result).slice(0, 10)
+          : [],
+      messageKeys:
+        payload.message && typeof payload.message === "object"
+          ? Object.keys(payload.message).slice(0, 10)
+          : payload.result?.message &&
+              typeof payload.result.message === "object"
+            ? Object.keys(payload.result.message).slice(0, 10)
+            : [],
     })
   );
   after(async () => {
