@@ -71,32 +71,44 @@ function normalized(value: string) {
 }
 
 async function handleLinkCommand(userId: string, text: string) {
-  const match = text.trim().match(/^LIENKET\s+(\S+)\s+(\d{4})$/i);
+  const match = text.trim().match(/^LIENKET\s+(?:(\S+)\s+)?(\d{3})$/i);
   if (!match) return false;
 
-  const [, contractCode, phoneLastFour] = match;
+  const [, contractCode, phoneLastThree] = match;
   const admin = createAdminClient();
-  const { data: contracts } = await admin
+  let contractQuery = admin
     .from("contracts")
     .select(`
       id, account_id, room_id, contract_code, status,
       tenants!contracts_main_tenant_id_fkey(phone),
       rooms!contracts_room_id_fkey(room_number)
     `)
-    .eq("contract_code", contractCode)
     .in("status", ["active", "expiring"]);
 
+  if (contractCode) {
+    contractQuery = contractQuery.eq("contract_code", contractCode);
+  }
+
+  const { data: contracts } = await contractQuery;
   const candidates = (contracts ?? []).filter((contract) => {
     const tenant = Array.isArray(contract.tenants)
       ? contract.tenants[0]
       : contract.tenants;
-    return tenant?.phone?.replace(/\D/g, "").endsWith(phoneLastFour);
+    return tenant?.phone?.replace(/\D/g, "").endsWith(phoneLastThree);
   });
 
-  if (candidates.length !== 1) {
+  if (candidates.length === 0) {
     await sendZaloText(
       userId,
-      "Không tìm thấy hợp đồng phù hợp. Kiểm tra lại mã hợp đồng và 4 số cuối điện thoại."
+      "Không tìm thấy hợp đồng đang hoạt động có số điện thoại phù hợp. Hãy kiểm tra lại 3 số cuối."
+    );
+    return true;
+  }
+
+  if (candidates.length > 1) {
+    await sendZaloText(
+      userId,
+      "Có nhiều hợp đồng trùng 3 số cuối. Hãy gửi lại theo mẫu:\nLIENKET <mã hợp đồng> <3 số cuối SĐT>"
     );
     return true;
   }
@@ -172,7 +184,7 @@ async function processImage(
   if (!link) {
     await sendZaloText(
       userId,
-      "Zalo này chưa liên kết với phòng. Gửi: LIENKET <mã hợp đồng> <4 số cuối SĐT>."
+      "Zalo này chưa liên kết với phòng. Gửi: LIENKET <3 số cuối SĐT>."
     );
     return;
   }
@@ -324,7 +336,7 @@ async function processWebhook(payload: ZaloWebhook) {
 
   await sendZaloText(
     userId,
-    "Xin chào! Để liên kết phòng, hãy gửi:\nLIENKET <mã hợp đồng> <4 số cuối SĐT>\n\nSau khi liên kết, bạn có thể gửi ảnh công tơ điện hoặc nước."
+    "Xin chào! Để liên kết phòng, hãy gửi:\nLIENKET <3 số cuối SĐT>\n\nVí dụ: LIENKET 529\nSau khi liên kết, bạn có thể gửi ảnh công tơ điện hoặc nước."
   );
 }
 

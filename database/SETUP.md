@@ -178,7 +178,13 @@ https://TEN-MIEN-CUA-BAN/api/zalo/webhook
 Người thuê liên kết Zalo bằng tin nhắn:
 
 ```text
-LIENKET MA_HOP_DONG 4_SO_CUOI_SDT
+LIENKET 3_SO_CUOI_SDT
+```
+
+Nếu có nhiều hợp đồng trùng 3 số cuối, bot sẽ yêu cầu gửi thêm mã hợp đồng:
+
+```text
+LIENKET MA_HOP_DONG 3_SO_CUOI_SDT
 ```
 
 Sau đó gửi ảnh công tơ. Bot sẽ trả lại chỉ số, lượng tiêu thụ và số tiền dự
