@@ -294,7 +294,20 @@ async function processImage(
 async function processWebhook(payload: ZaloWebhook) {
   const message = webhookMessage(payload);
   const userId = message?.chat?.id || message?.from?.id || "";
-  if (!message || !userId) return;
+  console.log(
+    JSON.stringify({
+      level: "info",
+      message: "zalo_webhook_parsed",
+      eventName: payload.result?.event_name ?? null,
+      hasMessage: Boolean(message),
+      hasChatId: Boolean(userId),
+      hasText: Boolean(message?.text),
+      hasPhoto: Boolean(message?.photo),
+    })
+  );
+  if (!message || !userId) {
+    throw new Error("Payload Zalo không có result.message.chat.id.");
+  }
 
   const text = message.text?.trim() ?? message.caption?.trim() ?? "";
   if (text && (await handleLinkCommand(userId, text))) return;
@@ -313,20 +326,61 @@ export async function GET(request: Request) {
   if (!webhookAuthorized(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  if (new URL(request.url).searchParams.get("health") === "1") {
+    return NextResponse.json({
+      ok: true,
+      configured: {
+        webhookSecret: Boolean(process.env.ZALO_WEBHOOK_SECRET),
+        botToken: Boolean(process.env.ZALO_BOT_TOKEN),
+        supabaseSecret: Boolean(
+          process.env.SUPABASE_SECRET_KEY ||
+            process.env.SUPABASE_SERVICE_ROLE_KEY
+        ),
+      },
+    });
+  }
   const challenge = new URL(request.url).searchParams.get("challenge");
   return new NextResponse(challenge || "Zalo webhook ready");
 }
 
 export async function POST(request: Request) {
+  const startedAt = Date.now();
   if (!webhookAuthorized(request)) {
+    console.warn(
+      JSON.stringify({
+        level: "warning",
+        message: "zalo_webhook_unauthorized",
+      })
+    );
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const payload = (await request.json()) as ZaloWebhook;
+  console.log(
+    JSON.stringify({
+      level: "info",
+      message: "zalo_webhook_received",
+      eventName: payload.result?.event_name ?? null,
+    })
+  );
   after(async () => {
     try {
       await processWebhook(payload);
+      console.log(
+        JSON.stringify({
+          level: "info",
+          message: "zalo_webhook_completed",
+          durationMs: Date.now() - startedAt,
+        })
+      );
     } catch (error) {
-      console.error("Zalo webhook processing failed", error);
+      console.error(
+        JSON.stringify({
+          level: "error",
+          message: "zalo_webhook_failed",
+          error: error instanceof Error ? error.message : String(error),
+          durationMs: Date.now() - startedAt,
+        })
+      );
     }
   });
   return NextResponse.json({ received: true });

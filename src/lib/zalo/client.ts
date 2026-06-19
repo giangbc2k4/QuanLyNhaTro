@@ -15,6 +15,14 @@ function botApiUrl(method: string) {
 }
 
 export async function sendZaloText(chatId: string, text: string) {
+  console.log(
+    JSON.stringify({
+      level: "info",
+      message: "zalo_send_started",
+      chatIdSuffix: chatId.slice(-6),
+      textLength: text.length,
+    })
+  );
   const response = await fetch(botApiUrl("sendMessage"), {
     method: "POST",
     headers: {
@@ -42,5 +50,13 @@ export async function sendZaloText(chatId: string, text: string) {
     );
   }
 
+  console.log(
+    JSON.stringify({
+      level: "info",
+      message: "zalo_send_succeeded",
+      chatIdSuffix: chatId.slice(-6),
+      messageId: body.result?.message_id,
+    })
+  );
   return body.result;
 }
