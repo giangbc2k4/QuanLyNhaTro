@@ -92,13 +92,11 @@ const cccdPrompt = [
 
 const meterSchema = {
   type: "object",
-  additionalProperties: false,
   properties: {
     readings: {
       type: "array",
       items: {
         type: "object",
-        additionalProperties: false,
         properties: {
           type: {
             type: "string",
@@ -390,8 +388,71 @@ function parseCccdResult(result: ProviderResult) {
 
 function parseMeterResult(result: ProviderResult) {
   try {
-    const data = JSON.parse(result.text) as MeterOcrResult;
-    if (!Array.isArray(data.readings)) throw new Error("invalid readings");
+    const raw = JSON.parse(result.text) as {
+      readings?: Array<{
+        type?: string;
+        value?: number | string;
+        reading?: number | string;
+        unit?: string;
+        confidence?: number | string;
+      }>;
+      imageQuality?: string | number;
+      notes?: string;
+    };
+    if (!Array.isArray(raw.readings)) throw new Error("invalid readings");
+    const readings = raw.readings.flatMap((reading) => {
+      const rawValue = reading.value ?? reading.reading;
+      const value =
+        typeof rawValue === "number"
+          ? rawValue
+          : Number(String(rawValue ?? "").replace(",", ".").replace(/[^\d.]/g, ""));
+      if (!Number.isFinite(value) || value < 0) return [];
+
+      const rawType = String(reading.type ?? "").toLowerCase();
+      const unit = String(reading.unit ?? "");
+      const type: MeterOcrResult["readings"][number]["type"] =
+        rawType.includes("electric") ||
+        rawType.includes("điện") ||
+        unit.toLowerCase().includes("kwh")
+          ? "electric"
+          : rawType.includes("water") ||
+              rawType.includes("nước") ||
+              unit.includes("m³") ||
+              unit.toLowerCase().includes("m3")
+            ? "water"
+            : "unknown";
+      const confidence = Number(reading.confidence ?? 0);
+      return [{
+        type,
+        value,
+        unit:
+          unit ||
+          (type === "electric" ? "kWh" : type === "water" ? "m³" : ""),
+        confidence: Number.isFinite(confidence)
+          ? Math.max(0, Math.min(100, confidence))
+          : 0,
+      }];
+    });
+    const qualityValue = raw.imageQuality;
+    const imageQuality: MeterOcrResult["imageQuality"] =
+      typeof qualityValue === "number"
+        ? qualityValue >= 7
+          ? "good"
+          : qualityValue >= 3
+            ? "blurry"
+            : "unreadable"
+        : qualityValue === "good" ||
+            qualityValue === "blurry" ||
+            qualityValue === "unreadable"
+          ? qualityValue
+          : readings.length
+            ? "good"
+            : "unreadable";
+    const data: MeterOcrResult = {
+      readings,
+      imageQuality,
+      notes: String(raw.notes ?? ""),
+    };
     return { data, provider: result.provider, model: result.model };
   } catch {
     throw new AiGatewayError(
@@ -440,6 +501,14 @@ export async function extractCccdFromImages(front: ImageInput, back: ImageInput)
       return parseCccdResult(result);
     } catch (error) {
       lastError = error;
+      console.warn(
+        JSON.stringify({
+          level: "warning",
+          message: "meter_ocr_provider_failed",
+          provider,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      );
     }
   }
 
