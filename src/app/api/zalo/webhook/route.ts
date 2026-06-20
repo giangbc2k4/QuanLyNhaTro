@@ -123,6 +123,24 @@ function formatDate(value: string | null | undefined) {
   return `${day}/${month}/${year}`;
 }
 
+function parseCorrectedReading(raw: string) {
+  let value = raw.replace(/\s/g, "");
+  if (value.includes(".") && value.includes(",")) {
+    value = value.replace(/\./g, "").replace(",", ".");
+  } else if (value.includes(",")) {
+    const decimalLength = value.length - value.lastIndexOf(",") - 1;
+    value =
+      decimalLength <= 2
+        ? value.replace(",", ".")
+        : value.replace(/,/g, "");
+  } else if (value.includes(".")) {
+    const parts = value.split(".");
+    if (parts.length > 2) value = parts.join("");
+    else if (parts[1]?.length === 3) value = parts.join("");
+  }
+  return Number(value);
+}
+
 function invoiceStatusLabel(status: string, dueDate: string) {
   if (status === "paid") return "Đã thanh toán";
   if (status === "cancelled") return "Đã hủy";
@@ -448,11 +466,31 @@ async function handleLinkCommand(userId: string, text: string) {
   return true;
 }
 
-async function confirmLatest(userId: string, accepted: boolean) {
+type ProposedMeterValue = {
+  account_id: string;
+  submission_id: string;
+  contract_service_id: string;
+  service_name: string;
+  unit: string;
+  unit_price: number;
+  previous_reading: number;
+  current_reading: number;
+  quantity: number;
+  amount: number;
+  confidence: number;
+};
+
+type PendingMeterPayload = {
+  ocr?: unknown;
+  proposedValues?: ProposedMeterValue[];
+  correctedByUser?: boolean;
+};
+
+async function latestPendingSubmission(userId: string) {
   const admin = createAdminClient();
   const { data: submission } = await admin
     .from("meter_reading_submissions")
-    .select("id")
+    .select("id, ai_payload")
     .eq("zalo_user_id", userId)
     .eq("status", "awaiting_confirmation")
     .order("created_at", { ascending: false })
@@ -461,22 +499,116 @@ async function confirmLatest(userId: string, accepted: boolean) {
 
   if (!submission) {
     await sendZaloText(userId, "Không có chỉ số nào đang chờ xác nhận.");
-    return;
+    return null;
+  }
+  return { admin, submission };
+}
+
+async function confirmLatest(userId: string, accepted: boolean) {
+  const pending = await latestPendingSubmission(userId);
+  if (!pending) return;
+  const { admin, submission } = pending;
+  const payload = (submission.ai_payload ?? {}) as PendingMeterPayload;
+  const values = payload.proposedValues ?? [];
+
+  if (accepted) {
+    if (!values.length) {
+      await sendZaloText(
+        userId,
+        "Không tìm thấy chỉ số đề xuất để xác nhận. Vui lòng gửi lại ảnh."
+      );
+      return;
+    }
+    const { error: valueError } = await admin
+      .from("meter_reading_values")
+      .insert(values);
+    if (valueError) {
+      await sendZaloText(
+        userId,
+        "Không thể lưu chỉ số đã xác nhận. Vui lòng thử lại."
+      );
+      return;
+    }
   }
 
-  await admin
+  const { error: statusError } = await admin
     .from("meter_reading_submissions")
     .update({
       status: accepted ? "confirmed" : "rejected",
       confirmed_at: accepted ? new Date().toISOString() : null,
     })
-    .eq("id", submission.id);
+    .eq("id", submission.id)
+    .eq("status", "awaiting_confirmation");
+
+  if (statusError) {
+    if (accepted) {
+      await admin
+        .from("meter_reading_values")
+        .delete()
+        .eq("submission_id", submission.id);
+    }
+    await sendZaloText(userId, "Không thể cập nhật trạng thái xác nhận.");
+    return;
+  }
 
   await sendZaloText(
     userId,
     accepted
       ? "Đã xác nhận chỉ số. Hệ thống sẽ tự lấy số này khi tạo hóa đơn."
       : "Đã bỏ kết quả vừa đọc. Vui lòng chụp rõ mặt đồng hồ và gửi lại."
+  );
+}
+
+async function correctLatestReading(userId: string, correctedValue: number) {
+  const pending = await latestPendingSubmission(userId);
+  if (!pending) return;
+  const { admin, submission } = pending;
+  const payload = (submission.ai_payload ?? {}) as PendingMeterPayload;
+  const values = payload.proposedValues ?? [];
+  if (values.length !== 1) {
+    await sendZaloText(
+      userId,
+      "Ảnh này có nhiều chỉ số. Hãy gửi lại riêng từng ảnh công tơ."
+    );
+    return;
+  }
+
+  const value = values[0];
+  if (!Number.isFinite(correctedValue) || correctedValue < value.previous_reading) {
+    await sendZaloText(
+      userId,
+      `Số đúng phải từ ${value.previous_reading} ${value.unit} trở lên.`
+    );
+    return;
+  }
+  const corrected: ProposedMeterValue = {
+    ...value,
+    current_reading: correctedValue,
+    quantity: correctedValue - value.previous_reading,
+    amount: Math.round(
+      (correctedValue - value.previous_reading) * value.unit_price
+    ),
+    confidence: 100,
+  };
+  const { error } = await admin
+    .from("meter_reading_submissions")
+    .update({
+      ai_payload: {
+        ...payload,
+        proposedValues: [corrected],
+        correctedByUser: true,
+      },
+    })
+    .eq("id", submission.id)
+    .eq("status", "awaiting_confirmation");
+
+  if (error) {
+    await sendZaloText(userId, "Không thể cập nhật số đúng. Vui lòng thử lại.");
+    return;
+  }
+  await sendZaloText(
+    userId,
+    `Đã sửa ${corrected.service_name} thành ${corrected.current_reading} ${corrected.unit}.\nTiêu thụ: ${corrected.quantity} ${corrected.unit}\nTạm tính: ${corrected.amount.toLocaleString("vi-VN")}đ\n\nTrả lời OK để lưu hoặc SAI <số đúng> để sửa tiếp.`
   );
 }
 
@@ -498,6 +630,23 @@ async function processImage(
       "Zalo này chưa liên kết với phòng. Gửi: LIENKET <3 số cuối SĐT>."
     );
     return;
+  }
+
+  const { data: olderPending } = await admin
+    .from("meter_reading_submissions")
+    .select("id")
+    .eq("zalo_user_id", userId)
+    .eq("status", "awaiting_confirmation");
+  const olderPendingIds = (olderPending ?? []).map((item) => item.id);
+  if (olderPendingIds.length > 0) {
+    await admin
+      .from("meter_reading_values")
+      .delete()
+      .in("submission_id", olderPendingIds);
+    await admin
+      .from("meter_reading_submissions")
+      .update({ status: "rejected" })
+      .in("id", olderPendingIds);
   }
 
   const { data: submission, error: submissionError } = await admin
@@ -544,15 +693,6 @@ async function processImage(
       mimeType: contentType,
       data: bytes.toString("base64"),
     });
-    await admin
-      .from("meter_reading_submissions")
-      .update({
-        image_path: imagePath,
-        ai_provider: result.provider,
-        ai_model: result.model,
-        ai_payload: result.data,
-      })
-      .eq("id", submission.id);
     const { data: services } = await admin
       .from("contract_services")
       .select("id, service_name, unit, price, billing_type")
@@ -560,7 +700,7 @@ async function processImage(
       .eq("account_id", link.account_id)
       .eq("billing_type", "metered");
 
-    const values: Array<Record<string, unknown>> = [];
+    const values: ProposedMeterValue[] = [];
     for (const reading of result.data.readings) {
       const readingSignal = normalized(
         `${reading.type} ${reading.unit} ${result.data.notes}`
@@ -621,11 +761,18 @@ async function processImage(
         `AI đọc được ${result.data.readings.length} chỉ số nhưng chưa xác định được đó là điện hay nước.`
       );
     }
-    await admin.from("meter_reading_values").insert(values);
     await admin
       .from("meter_reading_submissions")
       .update({
+        image_path: imagePath,
         status: "awaiting_confirmation",
+        ai_provider: result.provider,
+        ai_model: result.model,
+        ai_payload: {
+          ocr: result.data,
+          proposedValues: values,
+          correctedByUser: false,
+        },
       })
       .eq("id", submission.id);
 
@@ -636,7 +783,7 @@ async function processImage(
     );
     await sendZaloText(
       userId,
-      `AI đọc được:\n${lines.join("\n\n")}\n\nTrả lời OK để xác nhận hoặc SAI để gửi ảnh lại.`
+      `AI đọc được (CHƯA LƯU):\n${lines.join("\n\n")}\n\nNếu đúng, trả lời: OK\nNếu sai, trả lời: SAI <số đúng>\nVí dụ: SAI 4040`
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : "Không thể xử lý ảnh.";
@@ -703,7 +850,7 @@ async function processWebhook(payload: ZaloWebhook) {
   if (["guianh", "congto"].includes(command)) {
     await sendZaloText(
       userId,
-      "HƯỚNG DẪN GỬI ẢNH\n\n• Chụp thẳng mặt công tơ\n• Ảnh đủ sáng và rõ toàn bộ dãy số\n• Gửi riêng từng ảnh điện hoặc nước\n• Bot sẽ đọc số và yêu cầu bạn trả lời OK hoặc SAI"
+      "HƯỚNG DẪN GỬI ẢNH\n\n• Chụp thẳng mặt công tơ\n• Ảnh đủ sáng và rõ toàn bộ dãy số\n• Gửi riêng từng ảnh điện hoặc nước\n• Bot chỉ đề xuất, chưa lưu ngay\n• Đúng: trả lời OK\n• Sai: trả lời SAI <số đúng>, ví dụ SAI 4040"
     );
     return;
   }
@@ -713,6 +860,15 @@ async function processWebhook(payload: ZaloWebhook) {
   }
   if (text && (await handleLinkCommand(userId, text))) return;
   if (/^OK$/i.test(text)) return confirmLatest(userId, true);
+  const correction = text.match(
+    /^SAI\s*(?:\(|:|-)?\s*([\d.,]+)\s*\)?$/i
+  );
+  if (correction) {
+    return correctLatestReading(
+      userId,
+      parseCorrectedReading(correction[1])
+    );
+  }
   if (/^SAI$/i.test(text)) return confirmLatest(userId, false);
 
   if (imageUrl) return processImage(message, userId, imageUrl);
