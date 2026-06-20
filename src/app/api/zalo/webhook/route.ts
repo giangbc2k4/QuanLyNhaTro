@@ -60,6 +60,43 @@ function messageImageUrl(message: ZaloMessage) {
   return message.photo_url || message.photo || "";
 }
 
+function detectImageType(bytes: Buffer, responseContentType: string | null) {
+  const headerType = responseContentType?.split(";")[0].trim().toLowerCase();
+  if (
+    headerType === "image/jpeg" ||
+    headerType === "image/png" ||
+    headerType === "image/webp"
+  ) {
+    return headerType;
+  }
+
+  if (
+    bytes.length >= 3 &&
+    bytes[0] === 0xff &&
+    bytes[1] === 0xd8 &&
+    bytes[2] === 0xff
+  ) {
+    return "image/jpeg";
+  }
+  if (
+    bytes.length >= 8 &&
+    bytes.subarray(0, 8).equals(
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    )
+  ) {
+    return "image/png";
+  }
+  if (
+    bytes.length >= 12 &&
+    bytes.subarray(0, 4).toString("ascii") === "RIFF" &&
+    bytes.subarray(8, 12).toString("ascii") === "WEBP"
+  ) {
+    return "image/webp";
+  }
+
+  return null;
+}
+
 function currentBillingMonth() {
   const now = new Date();
   return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(
@@ -482,13 +519,16 @@ async function processImage(
       signal: AbortSignal.timeout(20_000),
     });
     if (!response.ok) throw new Error("Không tải được ảnh từ Zalo.");
-    const contentType = response.headers.get("content-type") || "image/jpeg";
-    if (!["image/jpeg", "image/png", "image/webp"].includes(contentType)) {
-      throw new Error("Định dạng ảnh không được hỗ trợ.");
-    }
     const bytes = Buffer.from(await response.arrayBuffer());
     if (bytes.byteLength > 5 * 1024 * 1024) {
       throw new Error("Ảnh vượt quá 5 MB.");
+    }
+    const contentType = detectImageType(
+      bytes,
+      response.headers.get("content-type")
+    );
+    if (!contentType) {
+      throw new Error("Nội dung Zalo gửi về không phải ảnh JPEG, PNG hoặc WebP.");
     }
 
     const extension =
@@ -571,13 +611,21 @@ async function processImage(
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : "Không thể xử lý ảnh.";
+    console.error(
+      JSON.stringify({
+        level: "error",
+        message: "zalo_meter_image_failed",
+        error: message,
+        submissionId: submission.id,
+      })
+    );
     await admin
       .from("meter_reading_submissions")
       .update({ status: "failed", error_message: message })
       .eq("id", submission.id);
     await sendZaloText(
       userId,
-      "Không đọc được ảnh công tơ. Hãy chụp thẳng, đủ sáng và thấy rõ toàn bộ dãy số."
+      `Không xử lý được ảnh công tơ: ${message}\nHãy chụp thẳng, đủ sáng và thấy rõ toàn bộ dãy số rồi gửi lại.`
     );
   }
 }
