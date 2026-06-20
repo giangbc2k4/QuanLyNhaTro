@@ -388,7 +388,14 @@ function parseCccdResult(result: ProviderResult) {
 
 function parseMeterResult(result: ProviderResult) {
   try {
-    const raw = JSON.parse(result.text) as {
+    const cleaned = result.text
+      .replace(/```json/gi, "")
+      .replace(/```/g, "")
+      .trim();
+    const jsonText = cleaned.match(/\{[\s\S]*\}/)?.[0] ?? cleaned;
+    const raw = JSON.parse(jsonText) as {
+      chi_so?: number | string;
+      loai?: string;
       readings?: Array<{
         type?: string;
         value?: number | string;
@@ -399,8 +406,26 @@ function parseMeterResult(result: ProviderResult) {
       imageQuality?: string | number;
       notes?: string;
     };
-    if (!Array.isArray(raw.readings)) throw new Error("invalid readings");
-    const readings = raw.readings.flatMap((reading) => {
+    const rawReadings =
+      Array.isArray(raw.readings) && raw.readings.length
+        ? raw.readings
+        : raw.chi_so !== undefined
+          ? [
+              {
+                type: raw.loai,
+                value: raw.chi_so,
+                unit:
+                  String(raw.loai ?? "").toLowerCase().includes("nuoc")
+                    ? "m³"
+                    : String(raw.loai ?? "").toLowerCase().includes("dien")
+                      ? "kWh"
+                      : "",
+                confidence: 0,
+              },
+            ]
+          : [];
+    if (!rawReadings.length) throw new Error("invalid readings");
+    const readings = rawReadings.flatMap((reading) => {
       const rawValue = reading.value ?? reading.reading;
       const value =
         typeof rawValue === "number"
@@ -413,10 +438,12 @@ function parseMeterResult(result: ProviderResult) {
       const type: MeterOcrResult["readings"][number]["type"] =
         rawType.includes("electric") ||
         rawType.includes("điện") ||
+        rawType.includes("dien") ||
         unit.toLowerCase().includes("kwh")
           ? "electric"
           : rawType.includes("water") ||
               rawType.includes("nước") ||
+              rawType.includes("nuoc") ||
               unit.includes("m³") ||
               unit.toLowerCase().includes("m3")
             ? "water"
@@ -525,12 +552,12 @@ export async function extractMeterReadingsFromImage(image: ImageInput) {
     {
       role: "system",
       content:
-        "Bạn là hệ thống OCR công tơ điện và nước. Chỉ đọc con số hiển thị rõ trên ảnh, tuyệt đối không suy đoán.",
+        "Bạn là OCR chuyên đọc mặt công tơ điện và nước Việt Nam. Chỉ đọc dãy số dùng để chốt tiền, không đọc số sê-ri, năm sản xuất hay thông số kỹ thuật.",
     },
     {
       role: "user",
       content:
-        "Hãy xác định đây là công tơ điện, nước hay không rõ và đọc chỉ số hiện tại. Một ảnh có thể chứa nhiều công tơ. Công tơ có chữ kWh, CÔNG TƠ ĐIỆN hoặc Điện lực phải dùng type electric. Công tơ có đơn vị m³ phải dùng type water. Với công tơ điện cơ, chữ số màu đỏ ngoài cùng thường là phần thập phân 1/10. Trả JSON với readings, imageQuality và notes. Điện dùng type electric, nước dùng type water. Nếu ảnh không đọc được, readings phải là mảng rỗng.",
+        'Đây là ảnh đồng hồ điện hoặc nước. Hãy đọc đúng chỉ số trên ô số chính. Chữ số màu đỏ cuối cùng của công tơ cơ là phần thập phân 1/10. Trả về duy nhất JSON dạng {"chi_so": 4040.0, "loai": "dien"} hoặc {"chi_so": 123.4, "loai": "nuoc"}. Không giải thích, không thêm markdown. Nếu không nhìn rõ, trả {"chi_so": null, "loai": "khong_ro"}.',
     },
   ];
   let lastError: unknown;
@@ -542,7 +569,6 @@ export async function extractMeterReadingsFromImage(image: ImageInput) {
           await callGemini({
             messages,
             images: [image],
-            schema: meterSchema,
             model: process.env.GEMINI_VISION_MODEL || "gemini-3.5-flash",
           })
         );
