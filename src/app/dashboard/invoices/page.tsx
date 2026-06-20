@@ -33,7 +33,10 @@ export default async function InvoicesPage() {
         id, contract_code, monthly_rent,
         rooms!contracts_room_id_fkey(room_number, buildings!rooms_building_id_fkey(name)),
         tenants!contracts_main_tenant_id_fkey(full_name),
-        contract_services(id, service_name, unit, price, billing_type)
+        contract_members(id),
+        contract_services(
+          id, service_name, unit, price, billing_type, opening_reading
+        )
       `)
       .eq("account_id", userId)
       .in("status", ["active", "expiring"])
@@ -86,7 +89,12 @@ export default async function InvoicesPage() {
     }
   }
   const confirmedByService = new Map<string, number>();
+  const confirmedHistoryByService = new Map<string, number[]>();
   for (const item of confirmedResult.data ?? []) {
+    const history =
+      confirmedHistoryByService.get(item.contract_service_id) ?? [];
+    history.push(Number(item.current_reading));
+    confirmedHistoryByService.set(item.contract_service_id, history);
     if (!confirmedByService.has(item.contract_service_id)) {
       confirmedByService.set(
         item.contract_service_id,
@@ -159,13 +167,20 @@ export default async function InvoicesPage() {
         buildingName: building?.name ?? "—",
         tenantName: tenant?.full_name ?? "—",
         monthlyRent: Number(contract.monthly_rent),
+        residentCount: 1 + (contract.contract_members?.length ?? 0),
         services: (contract.contract_services ?? []).map((service) => ({
           id: service.id,
           name: service.service_name,
           unit: service.unit,
           price: Number(service.price),
           billingType: service.billing_type,
-          previousReading: previousByService.get(service.id) ?? 0,
+          previousReading:
+            previousByService.get(service.id) ??
+            (service.opening_reading == null
+              ? undefined
+              : Number(service.opening_reading)) ??
+            confirmedHistoryByService.get(service.id)?.[1] ??
+            0,
           suggestedReading: confirmedByService.get(service.id) ?? null,
         })),
       };

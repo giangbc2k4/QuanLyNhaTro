@@ -8,7 +8,7 @@ interface ServiceRow {
   name: string;
   unit: string;
   price: number;
-  billing_type: "metered" | "fixed" | "free";
+  billing_type: "metered" | "fixed" | "per_person" | "free";
   description: string | null;
   is_active: boolean;
   is_default: boolean;

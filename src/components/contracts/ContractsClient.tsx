@@ -70,7 +70,7 @@ export interface ContractView {
     service_name: string;
     unit: string;
     price: number;
-    billing_type: "metered" | "fixed" | "free";
+    billing_type: "metered" | "fixed" | "per_person" | "free";
   }>;
 }
 
@@ -91,6 +91,12 @@ export interface RoomOption {
   monthlyRent: number;
   maintenance: boolean;
   occupied: boolean;
+  meterServices: Array<{
+    serviceId: string;
+    name: string;
+    unit: string;
+    suggestedReading: number | null;
+  }>;
 }
 
 export interface TenantOption {
@@ -294,6 +300,7 @@ function CreateContractModal({
     monthlyRent: 0,
     deposit: 0,
     note: "",
+    openingReadings: {},
     members: [],
   });
   const [duration, setDuration] = useState<number | null>(12);
@@ -303,6 +310,9 @@ function CreateContractModal({
     (tenant) =>
       tenant.id !== form.tenantId &&
       !form.members.some((member) => member.tenantId === tenant.id)
+  );
+  const selectedRoom = availableRooms.find(
+    (room) => room.id === form.roomId
   );
 
   function changeStartDate(startDate: string) {
@@ -348,7 +358,22 @@ function CreateContractModal({
       <form onSubmit={submit}>
         <div className="grid max-h-[72vh] gap-4 overflow-y-auto p-6 sm:grid-cols-2">
           <Field label="Người thuê chính *"><select required value={form.tenantId} onChange={(e) => setForm({ ...form, tenantId: e.target.value, members: form.members.filter((member) => member.tenantId !== e.target.value) })} className="form-input"><option value="">Chọn người thuê</option>{tenants.map((tenant) => <option key={tenant.id} value={tenant.id}>{tenant.name} · {tenant.phone}</option>)}</select></Field>
-          <Field label="Phòng sẵn sàng *"><select required value={form.roomId} onChange={(e) => { const room = rooms.find((item) => item.id === e.target.value); setForm({ ...form, roomId: e.target.value, monthlyRent: room?.monthlyRent ?? 0 }); }} className="form-input"><option value="">Chọn phòng</option>{availableRooms.map((room) => <option key={room.id} value={room.id}>P{room.number} · {room.buildingName}</option>)}</select></Field>
+          <Field label="Phòng sẵn sàng *"><select required value={form.roomId} onChange={(e) => {
+            const room = rooms.find((item) => item.id === e.target.value);
+            setForm({
+              ...form,
+              roomId: e.target.value,
+              monthlyRent: room?.monthlyRent ?? 0,
+              openingReadings: Object.fromEntries(
+                (room?.meterServices ?? [])
+                  .filter((service) => service.suggestedReading !== null)
+                  .map((service) => [
+                    service.serviceId,
+                    service.suggestedReading as number,
+                  ])
+              ),
+            });
+          }} className="form-input"><option value="">Chọn phòng</option>{availableRooms.map((room) => <option key={room.id} value={room.id}>P{room.number} · {room.buildingName}</option>)}</select></Field>
           <Field label="Ngày bắt đầu *"><input required type="date" value={form.startDate} onChange={(e) => changeStartDate(e.target.value)} className="form-input" /></Field>
           <Field label="Ngày kết thúc *"><input required type="date" min={form.startDate} value={form.endDate} onChange={(e) => { setDuration(null); setForm({ ...form, endDate: e.target.value }); }} className="form-input" /></Field>
           <div className="sm:col-span-2">
@@ -372,6 +397,46 @@ function CreateContractModal({
           </div>
           <Field label="Giá thuê/tháng *"><MoneyInput value={form.monthlyRent} onChange={(monthlyRent) => setForm({ ...form, monthlyRent })} required /></Field>
           <Field label="Tiền cọc"><MoneyInput value={form.deposit} onChange={(deposit) => setForm({ ...form, deposit })} /></Field>
+          {selectedRoom && selectedRoom.meterServices.length > 0 && (
+            <div className="sm:col-span-2 rounded-xl border border-accent/20 bg-accent/[0.04] p-4">
+              <div>
+                <p className="text-xs font-semibold text-white">
+                  Chỉ số bàn giao công tơ
+                </p>
+                <p className="mt-1 text-[10px] text-text-muted">
+                  Đây là số cũ dùng để tính hóa đơn đầu tiên. Hệ thống đã điền
+                  chỉ số gần nhất nếu phòng từng có dữ liệu.
+                </p>
+              </div>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                {selectedRoom.meterServices.map((service) => (
+                  <Field
+                    key={service.serviceId}
+                    label={`${service.name} (${service.unit}) *`}
+                  >
+                    <input
+                      required
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={form.openingReadings[service.serviceId] ?? ""}
+                      onChange={(event) =>
+                        setForm({
+                          ...form,
+                          openingReadings: {
+                            ...form.openingReadings,
+                            [service.serviceId]: Number(event.target.value),
+                          },
+                        })
+                      }
+                      placeholder="Nhập chỉ số khi bàn giao"
+                      className="form-input"
+                    />
+                  </Field>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="sm:col-span-2 rounded-xl border border-white/[0.06] bg-white/[0.02] p-4">
             <div className="mb-3 flex items-center justify-between">
               <div>

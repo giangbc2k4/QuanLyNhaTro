@@ -30,7 +30,7 @@ export interface ServiceView {
   name: string;
   unit: string;
   price: number;
-  billingType: "metered" | "fixed" | "free";
+  billingType: "metered" | "fixed" | "per_person" | "free";
   description: string | null;
   isActive: boolean;
   isDefault: boolean;
@@ -144,6 +144,8 @@ export default function ServicesClient({
                       <p className="mt-1 text-[10px] text-text-muted">
                         {service.billingType === "metered"
                           ? "Tính theo chỉ số sử dụng"
+                          : service.billingType === "per_person"
+                            ? "Tính theo người mỗi tháng"
                           : service.billingType === "free"
                             ? "Tiện ích miễn phí"
                             : "Phí cố định"}
@@ -303,7 +305,7 @@ function ServiceFormModal({
     service ? formatMoneyInput(service.price) : ""
   );
   const [billingType, setBillingType] = useState<
-    "metered" | "fixed" | "free"
+    "metered" | "fixed" | "per_person" | "free"
   >(
     service?.billingType ?? "fixed"
   );
@@ -357,15 +359,20 @@ function ServiceFormModal({
               <span className="mb-2 block">Cách tính</span>
               <select
                 value={billingType}
-                onChange={(event) =>
-                  setBillingType(
-                    event.target.value as "metered" | "fixed" | "free"
-                  )
-                }
+                onChange={(event) => {
+                  const nextType = event.target.value as
+                    | "metered"
+                    | "fixed"
+                    | "per_person"
+                    | "free";
+                  setBillingType(nextType);
+                  if (nextType === "per_person") setUnit("người/tháng");
+                }}
                 className="form-input"
               >
                 <option value="fixed">Phí cố định</option>
                 <option value="metered">Theo chỉ số</option>
+                <option value="per_person">Theo người/tháng</option>
                 <option value="free">Miễn phí</option>
               </select>
             </label>

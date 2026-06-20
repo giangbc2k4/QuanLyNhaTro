@@ -19,6 +19,7 @@ export default async function ContractsPage() {
     ownerResult,
     accountResult,
     identitiesResult,
+    roomMeterReadingsResult,
   ] = await Promise.all([
     supabase
       .from("contracts")
@@ -34,7 +35,14 @@ export default async function ContractsPage() {
       .order("created_at", { ascending: false }),
     supabase
       .from("rooms")
-      .select("id, room_number, monthly_rent, status, buildings!rooms_building_id_fkey(name, address)")
+      .select(`
+        id, room_number, monthly_rent, status,
+        buildings!rooms_building_id_fkey(name, address),
+        room_services(
+          service_id,
+          services!inner(name, unit, billing_type)
+        )
+      `)
       .eq("account_id", userId)
       .order("room_number"),
     supabase
@@ -56,6 +64,11 @@ export default async function ContractsPage() {
       .from("identity_documents")
       .select("owner_type, owner_profile_id, tenant_id, document_number, issued_at, issued_by")
       .eq("account_id", userId),
+    supabase
+      .from("room_meter_readings")
+      .select("room_id, service_id, reading_value, recorded_at")
+      .eq("account_id", userId)
+      .order("recorded_at", { ascending: false }),
   ]);
 
   const error =
@@ -64,7 +77,8 @@ export default async function ContractsPage() {
     tenantsResult.error ??
     ownerResult.error ??
     accountResult.error ??
-    identitiesResult.error;
+    identitiesResult.error ??
+    roomMeterReadingsResult.error;
   if (error) {
     return (
       <div className="glass rounded-2xl border border-red-500/20 p-6">
@@ -107,6 +121,13 @@ export default async function ContractsPage() {
       )
       .map((contract) => contract.room_id)
   );
+  const latestReadingByRoomService = new Map<string, number>();
+  for (const reading of roomMeterReadingsResult.data ?? []) {
+    const key = `${reading.room_id}:${reading.service_id}`;
+    if (!latestReadingByRoomService.has(key)) {
+      latestReadingByRoomService.set(key, Number(reading.reading_value));
+    }
+  }
   const occupiedTenantIds = new Set<string>();
   for (const contract of rawContracts) {
     if (!["active", "expiring"].includes(contract.status)) continue;
@@ -180,6 +201,23 @@ export default async function ContractsPage() {
       monthlyRent: Number(room.monthly_rent),
       maintenance: room.status === "maintenance",
       occupied: occupiedRoomIds.has(room.id),
+      meterServices: (room.room_services ?? [])
+        .map((roomService) => {
+          const service = Array.isArray(roomService.services)
+            ? roomService.services[0]
+            : roomService.services;
+          if (!service || service.billing_type !== "metered") return null;
+          return {
+            serviceId: roomService.service_id,
+            name: service.name,
+            unit: service.unit,
+            suggestedReading:
+              latestReadingByRoomService.get(
+                `${room.id}:${roomService.service_id}`
+              ) ?? null,
+          };
+        })
+        .filter((service) => service !== null),
     } satisfies RoomOption;
   });
 

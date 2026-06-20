@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 
 const SERVICES_PATH = "/dashboard/services";
 const BUILDINGS_PATH = "/dashboard/buildings";
-const billingTypes = ["metered", "fixed", "free"] as const;
+const billingTypes = ["metered", "fixed", "per_person", "free"] as const;
 
 export interface ServiceInput {
   id?: string;

@@ -327,7 +327,11 @@ async function handleServicesCommand(userId: string) {
           return `• ${service.service_name}: Miễn phí`;
         }
         const type =
-          service.billing_type === "metered" ? "theo chỉ số" : "cố định";
+          service.billing_type === "metered"
+            ? "theo chỉ số"
+            : service.billing_type === "per_person"
+              ? "theo người/tháng"
+              : "cố định";
         return `• ${service.service_name}: ${formatMoney(Number(service.price))}/${service.unit} (${type})`;
       }),
     ].join("\n")
@@ -490,7 +494,7 @@ async function latestPendingSubmission(userId: string) {
   const admin = createAdminClient();
   const { data: submission } = await admin
     .from("meter_reading_submissions")
-    .select("id, ai_payload")
+    .select("id, account_id, contract_id, room_id, billing_month, ai_payload")
     .eq("zalo_user_id", userId)
     .eq("status", "awaiting_confirmation")
     .order("created_at", { ascending: false })
@@ -510,6 +514,7 @@ async function confirmLatest(userId: string, accepted: boolean) {
   const { admin, submission } = pending;
   const payload = (submission.ai_payload ?? {}) as PendingMeterPayload;
   const values = payload.proposedValues ?? [];
+  let insertedRoomReadingIds: string[] = [];
 
   if (accepted) {
     if (!values.length) {
@@ -526,6 +531,74 @@ async function confirmLatest(userId: string, accepted: boolean) {
       await sendZaloText(
         userId,
         "Không thể lưu chỉ số đã xác nhận. Vui lòng thử lại."
+      );
+      return;
+    }
+
+    const contractServiceIds = values.map(
+      (value) => value.contract_service_id
+    );
+    const { data: contractServices, error: contractServicesError } =
+      await admin
+        .from("contract_services")
+        .select("id, source_service_id")
+        .in("id", contractServiceIds)
+        .eq("contract_id", submission.contract_id)
+        .eq("account_id", submission.account_id);
+
+    const sourceServiceByContractService = new Map(
+      (contractServices ?? [])
+        .filter((service) => service.source_service_id)
+        .map((service) => [service.id, service.source_service_id as string])
+    );
+    const roomReadings = values.flatMap((value) => {
+      const serviceId = sourceServiceByContractService.get(
+        value.contract_service_id
+      );
+      return serviceId
+        ? [
+            {
+              account_id: submission.account_id,
+              room_id: submission.room_id,
+              service_id: serviceId,
+              contract_id: submission.contract_id,
+              reading_type: "monthly",
+              reading_value: value.current_reading,
+              recorded_at: new Date().toISOString(),
+              note: `Chỉ số xác nhận qua Zalo cho kỳ ${submission.billing_month}`,
+            },
+          ]
+        : [];
+    });
+
+    const roomReadingResult =
+      roomReadings.length > 0
+        ? await admin
+            .from("room_meter_readings")
+            .insert(roomReadings)
+            .select("id")
+        : { data: [], error: null };
+    insertedRoomReadingIds = (roomReadingResult.data ?? []).map(
+      (reading) => reading.id
+    );
+    if (
+      contractServicesError ||
+      roomReadings.length !== values.length ||
+      roomReadingResult.error
+    ) {
+      await admin
+        .from("meter_reading_values")
+        .delete()
+        .eq("submission_id", submission.id);
+      if (insertedRoomReadingIds.length > 0) {
+        await admin
+          .from("room_meter_readings")
+          .delete()
+          .in("id", insertedRoomReadingIds);
+      }
+      await sendZaloText(
+        userId,
+        "Không thể lưu lịch sử chỉ số của phòng. Vui lòng thử xác nhận lại."
       );
       return;
     }
@@ -546,6 +619,12 @@ async function confirmLatest(userId: string, accepted: boolean) {
         .from("meter_reading_values")
         .delete()
         .eq("submission_id", submission.id);
+      if (insertedRoomReadingIds.length > 0) {
+        await admin
+          .from("room_meter_readings")
+          .delete()
+          .in("id", insertedRoomReadingIds);
+      }
     }
     await sendZaloText(userId, "Không thể cập nhật trạng thái xác nhận.");
     return;
@@ -584,10 +663,8 @@ async function correctLatestReading(userId: string, correctedValue: number) {
   const corrected: ProposedMeterValue = {
     ...value,
     current_reading: correctedValue,
-    quantity: correctedValue - value.previous_reading,
-    amount: Math.round(
-      (correctedValue - value.previous_reading) * value.unit_price
-    ),
+    quantity: 0,
+    amount: 0,
     confidence: 100,
   };
   const { error } = await admin
@@ -608,7 +685,7 @@ async function correctLatestReading(userId: string, correctedValue: number) {
   }
   await sendZaloText(
     userId,
-    `Đã sửa ${corrected.service_name} thành ${corrected.current_reading} ${corrected.unit}.\nTiêu thụ: ${corrected.quantity} ${corrected.unit}\nTạm tính: ${corrected.amount.toLocaleString("vi-VN")}đ\n\nTrả lời OK để lưu hoặc SAI <số đúng> để sửa tiếp.`
+    `Đã sửa chỉ số ${corrected.service_name} thành ${corrected.current_reading} ${corrected.unit}.\n\nTrả lời OK để lưu hoặc SAI <số đúng> để sửa tiếp.`
   );
 }
 
@@ -695,12 +772,35 @@ async function processImage(
     });
     const { data: services } = await admin
       .from("contract_services")
-      .select("id, service_name, unit, price, billing_type")
+      .select(
+        "id, source_service_id, service_name, unit, price, billing_type"
+      )
       .eq("contract_id", link.contract_id)
-      .eq("account_id", link.account_id)
-      .eq("billing_type", "metered");
+      .eq("account_id", link.account_id);
+    const sourceServiceIds = [
+      ...new Set(
+        (services ?? [])
+          .map((service) => service.source_service_id)
+          .filter((id): id is string => Boolean(id))
+      ),
+    ];
+    const { data: currentServices } =
+      sourceServiceIds.length > 0
+        ? await admin
+            .from("services")
+            .select("id, billing_type")
+            .eq("account_id", link.account_id)
+            .in("id", sourceServiceIds)
+        : { data: [] };
+    const currentBillingTypeByService = new Map(
+      (currentServices ?? []).map((service) => [
+        service.id,
+        service.billing_type,
+      ])
+    );
 
     const values: ProposedMeterValue[] = [];
+    const ignoredNonMeteredServices = new Set<string>();
     for (const reading of result.data.readings) {
       const readingSignal = normalized(
         `${reading.type} ${reading.unit} ${result.data.notes}`
@@ -715,15 +815,20 @@ async function processImage(
               readingSignal.includes("nuoc")
             ? "nuoc"
             : "";
-      let service = (services ?? []).find((item) =>
+      const service = (services ?? []).find((item) =>
         expectedName
           ? normalized(item.service_name).includes(expectedName)
           : false
       );
-      if (!service && (services ?? []).length === 1) {
-        service = services?.[0];
-      }
       if (!service) continue;
+      const effectiveBillingType = service.source_service_id
+        ? currentBillingTypeByService.get(service.source_service_id) ??
+          service.billing_type
+        : service.billing_type;
+      if (effectiveBillingType !== "metered") {
+        ignoredNonMeteredServices.add(service.service_name);
+        continue;
+      }
 
       const { data: previousValue } = await admin
         .from("meter_reading_values")
@@ -735,7 +840,6 @@ async function processImage(
         .maybeSingle();
       const previous = Number(previousValue?.current_reading ?? 0);
       if (reading.value < previous) continue;
-      const quantity = reading.value - previous;
       values.push({
         account_id: link.account_id,
         submission_id: submission.id,
@@ -745,8 +849,8 @@ async function processImage(
         unit_price: Number(service.price),
         previous_reading: previous,
         current_reading: reading.value,
-        quantity,
-        amount: Math.round(quantity * Number(service.price)),
+        quantity: 0,
+        amount: 0,
         confidence: reading.confidence,
       });
     }
@@ -757,6 +861,11 @@ async function processImage(
       );
     }
     if (!values.length) {
+      if (ignoredNonMeteredServices.size > 0) {
+        throw new Error(
+          `${[...ignoredNonMeteredServices].join(", ")} đang được tính theo người/tháng hoặc phí cố định nên không cần gửi ảnh công tơ.`
+        );
+      }
       throw new Error(
         `AI đọc được ${result.data.readings.length} chỉ số nhưng chưa xác định được đó là điện hay nước.`
       );
@@ -778,8 +887,7 @@ async function processImage(
 
     const lines = values.map(
       (value) =>
-        `${value.service_name}: ${value.current_reading} ${value.unit}\n` +
-        `Tiêu thụ: ${value.quantity} ${value.unit} × ${Number(value.unit_price).toLocaleString("vi-VN")}đ = ${Number(value.amount).toLocaleString("vi-VN")}đ`
+        `${value.service_name}: ${value.current_reading} ${value.unit}`
     );
     await sendZaloText(
       userId,

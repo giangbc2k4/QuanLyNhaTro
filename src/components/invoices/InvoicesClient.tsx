@@ -44,7 +44,7 @@ export interface InvoiceView {
     type: "rent" | "service" | "additional";
     name: string;
     unit: string;
-    billingType: "metered" | "fixed" | "free" | null;
+    billingType: "metered" | "fixed" | "per_person" | "free" | null;
     unitPrice: number;
     previousReading: number | null;
     currentReading: number | null;
@@ -61,12 +61,13 @@ export interface InvoiceContractOption {
   buildingName: string;
   tenantName: string;
   monthlyRent: number;
+  residentCount: number;
   services: Array<{
     id: string;
     name: string;
     unit: string;
     price: number;
-    billingType: "metered" | "fixed" | "free";
+    billingType: "metered" | "fixed" | "per_person" | "free";
     previousReading: number;
     suggestedReading: number | null;
   }>;
@@ -273,6 +274,9 @@ function CreateInvoiceModal({ contracts, pending, onClose, onSubmit }: {
     if (!contract) return 0;
     return contract.monthlyRent + contract.services.reduce((sum, service) => {
       if (service.billingType === "free") return sum;
+      if (service.billingType === "per_person") {
+        return sum + service.price * contract.residentCount;
+      }
       if (service.billingType === "fixed") return sum + service.price;
       const current = readings[service.id];
       return sum + (Number.isFinite(current) && current >= service.previousReading
@@ -319,7 +323,7 @@ function CreateInvoiceModal({ contracts, pending, onClose, onSubmit }: {
             <div className="mt-4 space-y-3">
               {contract?.services.map((service) => (
                 <div key={service.id} className="rounded-xl border border-white/[0.05] p-3">
-                  <div className="flex items-center justify-between"><div><p className="text-sm text-white">{service.name}</p><p className="text-[10px] text-text-muted">{service.billingType === "free" ? "Miễn phí" : `${formatVND(service.price)}/${service.unit}`}</p></div>{service.billingType !== "metered" && <span className="text-xs font-semibold text-text-secondary">{service.billingType === "free" ? "0đ" : formatVND(service.price)}</span>}</div>
+                  <div className="flex items-center justify-between"><div><p className="text-sm text-white">{service.name}</p><p className="text-[10px] text-text-muted">{service.billingType === "free" ? "Miễn phí" : `${formatVND(service.price)}/${service.unit}`}</p></div>{service.billingType !== "metered" && <span className="text-xs font-semibold text-text-secondary">{service.billingType === "free" ? "0đ" : service.billingType === "per_person" ? formatVND(service.price * contract.residentCount) : formatVND(service.price)}</span>}</div>
                   {service.billingType === "metered" && <div className="mt-3 grid grid-cols-2 gap-3"><label className="text-[10px] text-text-muted">Chỉ số cũ<input readOnly className="form-input mt-1 opacity-70" value={service.previousReading} /></label><label className="text-[10px] text-text-muted">Chỉ số mới {service.suggestedReading !== null && <span className="text-success">(từ Zalo)</span>}<input required type="number" min={service.previousReading} step="0.01" className="form-input mt-1" value={readings[service.id] ?? ""} onChange={(event) => setReadings((current) => ({ ...current, [service.id]: Number(event.target.value) }))} /></label></div>}
                 </div>
               ))}
@@ -342,7 +346,7 @@ function InvoiceDetail({ invoice, pending, onClose, onPaid, onCancel }: { invoic
     <div className="flex items-center justify-between border-b border-border px-6 py-4"><div><h3 className="font-semibold text-white">{invoice.code}</h3><p className="mt-1 text-xs text-text-muted">{invoice.roomNumber} — {invoice.buildingName} · {invoice.tenantName}</p></div><button type="button" onClick={onClose} className="text-text-muted hover:text-white"><X size={18} /></button></div>
     <div className="space-y-4 p-6"><div className="flex justify-between text-xs"><span className="text-text-muted">Kỳ hóa đơn</span><span className="text-white">{invoice.billingMonth.slice(0, 7)}</span></div><div className="flex justify-between text-xs"><span className="text-text-muted">Hạn thanh toán</span><span className="text-white">{formatDate(invoice.dueDate)}</span></div><div className="flex justify-between text-xs"><span className="text-text-muted">Trạng thái</span><span className={status.className.split(" ").at(-1)}>{status.label}</span></div>
       <div className="section-divider" />
-      {invoice.items.map((item) => <div key={item.id} className="flex items-start justify-between gap-4 text-xs"><div><p className="text-text-secondary">{item.name}</p><p className="mt-1 text-[10px] text-text-muted">{item.billingType === "metered" ? `${item.previousReading} → ${item.currentReading} ${item.unit} · ${item.quantity} × ${formatVND(item.unitPrice)}` : item.billingType === "free" ? "Miễn phí" : `${item.quantity} × ${formatVND(item.unitPrice)}`}</p></div><span className="shrink-0 font-semibold text-white">{formatVND(item.amount)}</span></div>)}
+      {invoice.items.map((item) => <div key={item.id} className="flex items-start justify-between gap-4 text-xs"><div><p className="text-text-secondary">{item.name}</p><p className="mt-1 text-[10px] text-text-muted">{item.billingType === "metered" ? `${item.previousReading} → ${item.currentReading} ${item.unit} · ${item.quantity} × ${formatVND(item.unitPrice)}` : item.billingType === "free" ? "Miễn phí" : item.billingType === "per_person" ? `${item.quantity} người × ${formatVND(item.unitPrice)}` : `${item.quantity} × ${formatVND(item.unitPrice)}`}</p></div><span className="shrink-0 font-semibold text-white">{formatVND(item.amount)}</span></div>)}
       {invoice.note && <div className="rounded-xl bg-white/[0.03] p-3 text-xs text-text-secondary">{invoice.note}</div>}
       <div className="section-divider" /><div className="flex items-center justify-between"><span className="font-semibold text-white">Tổng cộng</span><span className="text-xl font-bold text-accent">{formatVND(invoice.total)}</span></div>
     </div>

@@ -13,6 +13,7 @@ export interface ContractInput {
   monthlyRent: number;
   deposit: number;
   note: string;
+  openingReadings: Record<string, number>;
   members: Array<{
     tenantId: string;
     relationship: string;
@@ -44,6 +45,10 @@ export async function createContractAction(
     ? input.members.filter((member) => member.tenantId)
     : [];
   const memberIds = [...new Set(members.map((member) => member.tenantId))];
+  const openingReadings =
+    input.openingReadings && typeof input.openingReadings === "object"
+      ? input.openingReadings
+      : {};
   if (
     !isUuid(input.roomId) ||
     !isUuid(input.tenantId) ||
@@ -105,6 +110,35 @@ export async function createContractAction(
   }
   if (currentContract) {
     return { success: false, message: "Phòng đang có hợp đồng hiệu lực." };
+  }
+
+  const { data: meteredRoomServices, error: meteredServicesError } =
+    await supabase
+      .from("room_services")
+      .select("service_id, services!inner(name, unit, billing_type)")
+      .eq("room_id", input.roomId)
+      .eq("account_id", user.id)
+      .eq("services.billing_type", "metered");
+
+  if (meteredServicesError) {
+    return {
+      success: false,
+      message: "Không thể tải danh sách công tơ của phòng.",
+    };
+  }
+
+  const invalidOpeningReading = (meteredRoomServices ?? []).find((item) => {
+    const reading = Number(openingReadings[item.service_id]);
+    return !Number.isFinite(reading) || reading < 0;
+  });
+  if (invalidOpeningReading) {
+    const service = Array.isArray(invalidOpeningReading.services)
+      ? invalidOpeningReading.services[0]
+      : invalidOpeningReading.services;
+    return {
+      success: false,
+      message: `Vui lòng nhập chỉ số bàn giao của ${service?.name ?? "công tơ"}.`,
+    };
   }
 
   const unavailableTenantIds = new Set<string>();
@@ -171,6 +205,57 @@ export async function createContractAction(
     };
   }
 
+  if ((meteredRoomServices ?? []).length > 0) {
+    for (const service of meteredRoomServices ?? []) {
+      const reading = Number(openingReadings[service.service_id]);
+      const { error: contractServiceError } = await supabase
+        .from("contract_services")
+        .update({ opening_reading: reading })
+        .eq("contract_id", contract.id)
+        .eq("account_id", user.id)
+        .eq("source_service_id", service.service_id);
+
+      if (contractServiceError) {
+        await supabase
+          .from("contracts")
+          .delete()
+          .eq("id", contract.id)
+          .eq("account_id", user.id);
+        return {
+          success: false,
+          message: "Không thể lưu chỉ số bàn giao vào hợp đồng.",
+        };
+      }
+    }
+
+    const { error: readingError } = await supabase
+      .from("room_meter_readings")
+      .insert(
+        (meteredRoomServices ?? []).map((service) => ({
+          account_id: user.id,
+          room_id: input.roomId,
+          service_id: service.service_id,
+          contract_id: contract.id,
+          reading_type: "contract_start",
+          reading_value: Number(openingReadings[service.service_id]),
+          recorded_at: `${input.startDate}T00:00:00+07:00`,
+          note: "Chỉ số bàn giao khi bắt đầu hợp đồng",
+        }))
+      );
+
+    if (readingError) {
+      await supabase
+        .from("contracts")
+        .delete()
+        .eq("id", contract.id)
+        .eq("account_id", user.id);
+      return {
+        success: false,
+        message: "Không thể lưu lịch sử chỉ số bàn giao.",
+      };
+    }
+  }
+
   if (memberTenants.length > 0) {
     const relationshipByTenant = new Map(
       members.map((member) => [
@@ -191,6 +276,11 @@ export async function createContractAction(
       );
 
     if (memberError) {
+      await supabase
+        .from("room_meter_readings")
+        .delete()
+        .eq("contract_id", contract.id)
+        .eq("account_id", user.id);
       await supabase
         .from("contracts")
         .delete()

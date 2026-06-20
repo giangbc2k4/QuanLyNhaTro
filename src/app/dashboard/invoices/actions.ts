@@ -52,7 +52,11 @@ export async function createInvoiceAction(
     .from("contracts")
     .select(`
       id, room_id, main_tenant_id, monthly_rent, status,
-      contract_services(id, service_name, unit, price, billing_type)
+      contract_members(id),
+      contract_services(
+        id, source_service_id, service_name, unit, price, billing_type,
+        opening_reading
+      )
     `)
     .eq("id", input.contractId)
     .eq("account_id", user.id)
@@ -64,18 +68,32 @@ export async function createInvoiceAction(
   }
 
   const services = contract.contract_services ?? [];
+  const residentCount = 1 + (contract.contract_members?.length ?? 0);
   const serviceIds = services.map((service) => service.id);
   const previousByService = new Map<string, number>();
+  const confirmedReadingsByService = new Map<string, number[]>();
   if (serviceIds.length > 0) {
-    const { data: previousItems } = await supabase
-      .from("invoice_items")
-      .select("source_contract_service_id, current_reading, created_at")
-      .eq("account_id", user.id)
-      .in("source_contract_service_id", serviceIds)
-      .not("current_reading", "is", null)
-      .order("created_at", { ascending: false });
+    const [previousItemsResult, confirmedReadingsResult] = await Promise.all([
+      supabase
+        .from("invoice_items")
+        .select("source_contract_service_id, current_reading, created_at")
+        .eq("account_id", user.id)
+        .in("source_contract_service_id", serviceIds)
+        .not("current_reading", "is", null)
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("meter_reading_values")
+        .select(`
+          contract_service_id, current_reading, created_at,
+          meter_reading_submissions!inner(status)
+        `)
+        .eq("account_id", user.id)
+        .in("contract_service_id", serviceIds)
+        .eq("meter_reading_submissions.status", "confirmed")
+        .order("created_at", { ascending: false }),
+    ]);
 
-    for (const item of previousItems ?? []) {
+    for (const item of previousItemsResult.data ?? []) {
       if (
         item.source_contract_service_id &&
         !previousByService.has(item.source_contract_service_id)
@@ -85,6 +103,13 @@ export async function createInvoiceAction(
           Number(item.current_reading)
         );
       }
+    }
+
+    for (const reading of confirmedReadingsResult.data ?? []) {
+      const values =
+        confirmedReadingsByService.get(reading.contract_service_id) ?? [];
+      values.push(Number(reading.current_reading));
+      confirmedReadingsByService.set(reading.contract_service_id, values);
     }
   }
 
@@ -111,9 +136,36 @@ export async function createInvoiceAction(
 
     if (service.billing_type === "free") {
       amount = 0;
+    } else if (service.billing_type === "per_person") {
+      quantity = residentCount;
+      amount = residentCount * price;
     } else if (service.billing_type === "metered") {
-      previousReading = previousByService.get(service.id) ?? 0;
       currentReading = Number(input.readings[service.id]);
+      const invoicedReading = previousByService.get(service.id);
+      if (invoicedReading !== undefined) {
+        previousReading = invoicedReading;
+      } else if (service.opening_reading != null) {
+        previousReading = Number(service.opening_reading);
+      } else {
+        const confirmedReadings =
+          confirmedReadingsByService.get(service.id) ?? [];
+        const currentIndex = confirmedReadings.findIndex(
+          (reading) => reading === currentReading
+        );
+        previousReading =
+          currentIndex >= 0
+            ? confirmedReadings[currentIndex + 1] ?? null
+            : confirmedReadings.find(
+                (reading) => reading < currentReading!
+              ) ?? null;
+      }
+
+      if (previousReading === null) {
+        return {
+          success: false,
+          message: `Chưa có chỉ số cũ của ${service.service_name}. Cần xác nhận ít nhất hai lần đọc công tơ trước khi lập hóa đơn đầu tiên.`,
+        };
+      }
       if (
         !Number.isFinite(currentReading) ||
         currentReading < previousReading
@@ -257,4 +309,3 @@ export async function cancelInvoiceAction(
   revalidatePath(INVOICES_PATH);
   return { success: true, message: "Đã hủy hóa đơn." };
 }
-
