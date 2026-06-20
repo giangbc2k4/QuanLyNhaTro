@@ -461,7 +461,7 @@ export async function extractMeterReadingsFromImage(image: ImageInput) {
     {
       role: "user",
       content:
-        "Hãy xác định đây là công tơ điện, nước hay không rõ và đọc chỉ số hiện tại. Một ảnh có thể chứa nhiều công tơ. Trả JSON với readings, imageQuality và notes. Điện dùng type electric, nước dùng type water. Nếu ảnh không đọc được, readings phải là mảng rỗng.",
+        "Hãy xác định đây là công tơ điện, nước hay không rõ và đọc chỉ số hiện tại. Một ảnh có thể chứa nhiều công tơ. Công tơ có chữ kWh, CÔNG TƠ ĐIỆN hoặc Điện lực phải dùng type electric. Công tơ có đơn vị m³ phải dùng type water. Với công tơ điện cơ, chữ số màu đỏ ngoài cùng thường là phần thập phân 1/10. Trả JSON với readings, imageQuality và notes. Điện dùng type electric, nước dùng type water. Nếu ảnh không đọc được, readings phải là mảng rỗng.",
     },
   ];
   let lastError: unknown;

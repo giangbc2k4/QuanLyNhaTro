@@ -543,6 +543,15 @@ async function processImage(
       mimeType: contentType,
       data: bytes.toString("base64"),
     });
+    await admin
+      .from("meter_reading_submissions")
+      .update({
+        image_path: imagePath,
+        ai_provider: result.provider,
+        ai_model: result.model,
+        ai_payload: result.data,
+      })
+      .eq("id", submission.id);
     const { data: services } = await admin
       .from("contract_services")
       .select("id, service_name, unit, price, billing_type")
@@ -552,11 +561,27 @@ async function processImage(
 
     const values: Array<Record<string, unknown>> = [];
     for (const reading of result.data.readings) {
-      const expectedName =
-        reading.type === "electric" ? "dien" : reading.type === "water" ? "nuoc" : "";
-      const service = (services ?? []).find((item) =>
-        expectedName ? normalized(item.service_name).includes(expectedName) : false
+      const readingSignal = normalized(
+        `${reading.type} ${reading.unit} ${result.data.notes}`
       );
+      const expectedName =
+        reading.type === "electric" ||
+        readingSignal.includes("kwh") ||
+        readingSignal.includes("dien")
+          ? "dien"
+          : reading.type === "water" ||
+              readingSignal.includes("m3") ||
+              readingSignal.includes("nuoc")
+            ? "nuoc"
+            : "";
+      let service = (services ?? []).find((item) =>
+        expectedName
+          ? normalized(item.service_name).includes(expectedName)
+          : false
+      );
+      if (!service && (services ?? []).length === 1) {
+        service = services?.[0];
+      }
       if (!service) continue;
 
       const { data: previousValue } = await admin
@@ -585,18 +610,21 @@ async function processImage(
       });
     }
 
-    if (!values.length || result.data.imageQuality === "unreadable") {
-      throw new Error("AI không đọc được chỉ số phù hợp trong ảnh.");
+    if (!result.data.readings.length || result.data.imageQuality === "unreadable") {
+      throw new Error(
+        `AI không đọc được dãy số trong ảnh (${result.provider}/${result.model}).`
+      );
+    }
+    if (!values.length) {
+      throw new Error(
+        `AI đọc được ${result.data.readings.length} chỉ số nhưng chưa xác định được đó là điện hay nước.`
+      );
     }
     await admin.from("meter_reading_values").insert(values);
     await admin
       .from("meter_reading_submissions")
       .update({
-        image_path: imagePath,
         status: "awaiting_confirmation",
-        ai_provider: result.provider,
-        ai_model: result.model,
-        ai_payload: result.data,
       })
       .eq("id", submission.id);
 
