@@ -1,5 +1,6 @@
 import ZaloClient, {
   type ZaloLinkView,
+  type ZaloSubmissionView,
 } from "@/components/zalo/ZaloClient";
 import { createClient } from "@/lib/supabase/server";
 
@@ -27,7 +28,17 @@ export default async function ZaloPage() {
       .order("verified_at", { ascending: false }),
     supabase
       .from("meter_reading_submissions")
-      .select("zalo_user_id, status, created_at")
+      .select(`
+        id, zalo_user_id, billing_month, image_path, status, ai_provider,
+        ai_model, ai_payload, error_message, confirmed_at, created_at,
+        rooms!meter_reading_submissions_room_id_fkey(
+          room_number,
+          buildings!rooms_building_id_fkey(name)
+        ),
+        meter_reading_values(
+          service_name, unit, current_reading, confidence
+        )
+      `)
       .eq("account_id", userId)
       .order("created_at", { ascending: false }),
   ]);
@@ -55,6 +66,90 @@ export default async function ZaloPage() {
     if (!latestSubmissionByZalo.has(submission.zalo_user_id)) {
       latestSubmissionByZalo.set(submission.zalo_user_id, submission);
     }
+  }
+
+  const signedImageEntries = await Promise.all(
+    (submissionsResult.data ?? [])
+      .filter(
+        (submission): submission is typeof submission & { image_path: string } =>
+          Boolean(submission.image_path)
+      )
+      .map(async (submission) => {
+        const { data } = await supabase.storage
+          .from("meter-readings")
+          .createSignedUrl(submission.image_path, 60 * 15);
+        return [submission.id, data?.signedUrl ?? null] as const;
+      })
+  );
+  const signedImageBySubmission = new Map(signedImageEntries);
+
+  const submissionsByZalo = new Map<string, ZaloSubmissionView[]>();
+  for (const submission of submissionsResult.data ?? []) {
+    const room = Array.isArray(submission.rooms)
+      ? submission.rooms[0]
+      : submission.rooms;
+    const building = room
+      ? Array.isArray(room.buildings)
+        ? room.buildings[0]
+        : room.buildings
+      : null;
+    const payload =
+      submission.ai_payload &&
+      typeof submission.ai_payload === "object" &&
+      !Array.isArray(submission.ai_payload)
+        ? (submission.ai_payload as Record<string, unknown>)
+        : {};
+    const ocr =
+      payload.ocr && typeof payload.ocr === "object" && !Array.isArray(payload.ocr)
+        ? (payload.ocr as Record<string, unknown>)
+        : {};
+    const rawReadings = Array.isArray(ocr.readings) ? ocr.readings : [];
+    const aiReadings = rawReadings.flatMap((reading) => {
+      if (!reading || typeof reading !== "object" || Array.isArray(reading)) {
+        return [];
+      }
+      const value = reading as Record<string, unknown>;
+      return typeof value.value === "number"
+        ? [
+            {
+              type: typeof value.type === "string" ? value.type : "unknown",
+              value: value.value,
+              unit: typeof value.unit === "string" ? value.unit : "",
+              confidence:
+                typeof value.confidence === "number"
+                  ? value.confidence
+                  : null,
+            },
+          ]
+        : [];
+    });
+    const confirmedValues = (submission.meter_reading_values ?? []).map(
+      (value) => ({
+        serviceName: value.service_name,
+        value: Number(value.current_reading),
+        unit: value.unit,
+        confidence:
+          value.confidence === null ? null : Number(value.confidence),
+      })
+    );
+    const view: ZaloSubmissionView = {
+      id: submission.id,
+      billingMonth: submission.billing_month,
+      status: submission.status,
+      imageUrl: signedImageBySubmission.get(submission.id) ?? null,
+      roomNumber: room?.room_number ?? "—",
+      buildingName: building?.name ?? "—",
+      aiProvider: submission.ai_provider,
+      aiModel: submission.ai_model,
+      aiReadings,
+      confirmedValues,
+      errorMessage: submission.error_message,
+      confirmedAt: submission.confirmed_at,
+      createdAt: submission.created_at,
+    };
+    const history = submissionsByZalo.get(submission.zalo_user_id) ?? [];
+    history.push(view);
+    submissionsByZalo.set(submission.zalo_user_id, history);
   }
 
   const links: ZaloLinkView[] = (linksResult.data ?? []).map((link) => {
@@ -93,9 +188,9 @@ export default async function ZaloPage() {
       buildingAddress: building?.address ?? "",
       latestSubmissionStatus: latestSubmission?.status ?? null,
       latestSubmissionAt: latestSubmission?.created_at ?? null,
+      submissions: submissionsByZalo.get(link.zalo_user_id) ?? [],
     };
   });
 
   return <ZaloClient links={links} botConfigured={Boolean(process.env.ZALO_BOT_TOKEN)} />;
 }
-

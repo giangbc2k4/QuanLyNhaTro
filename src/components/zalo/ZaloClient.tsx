@@ -8,13 +8,17 @@ import {
   Building2,
   CheckCircle2,
   Clock3,
+  Eye,
+  ImageIcon,
   Link2,
   Loader2,
   Search,
   Smartphone,
   Trash2,
+  Droplets,
   UserRound,
   X,
+  Zap,
 } from "lucide-react";
 import {
   unlinkZaloAction,
@@ -44,6 +48,33 @@ export interface ZaloLinkView {
   buildingAddress: string;
   latestSubmissionStatus: string | null;
   latestSubmissionAt: string | null;
+  submissions: ZaloSubmissionView[];
+}
+
+export interface ZaloSubmissionView {
+  id: string;
+  billingMonth: string;
+  status: string;
+  imageUrl: string | null;
+  roomNumber: string;
+  buildingName: string;
+  aiProvider: string | null;
+  aiModel: string | null;
+  aiReadings: Array<{
+    type: string;
+    value: number;
+    unit: string;
+    confidence: number | null;
+  }>;
+  confirmedValues: Array<{
+    serviceName: string;
+    value: number;
+    unit: string;
+    confidence: number | null;
+  }>;
+  errorMessage: string | null;
+  confirmedAt: string | null;
+  createdAt: string;
 }
 
 const statusLabel: Record<ContractStatus, string> = {
@@ -74,6 +105,8 @@ export default function ZaloClient({
   const [search, setSearch] = useState("");
   const [toast, setToast] = useState<ZaloActionResult | null>(null);
   const [confirming, setConfirming] = useState<ZaloLinkView | null>(null);
+  const [viewing, setViewing] = useState<ZaloLinkView | null>(null);
+  const [fullImage, setFullImage] = useState<string | null>(null);
   const query = search.trim().toLocaleLowerCase("vi");
   const filtered = links.filter(
     (link) =>
@@ -167,7 +200,7 @@ export default function ZaloClient({
           {filtered.map((link) => (
             <article
               key={link.id}
-              className="glass rounded-2xl border border-white/[0.06] p-5"
+              className="glass rounded-2xl border border-white/[0.06] p-5 transition hover:border-[#3686ff]/30"
             >
               <div className="flex items-start justify-between gap-4">
                 <div className="flex min-w-0 items-center gap-3">
@@ -234,12 +267,23 @@ export default function ZaloClient({
                 </div>
                 <button
                   type="button"
-                  onClick={() => setConfirming(link)}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setConfirming(link);
+                  }}
                   className="flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs text-red-400 hover:bg-red-500/10"
                 >
                   <Trash2 size={13} /> Gỡ liên kết
                 </button>
               </div>
+              <button
+                type="button"
+                onClick={() => setViewing(link)}
+                className="mt-3 flex w-full items-center justify-end gap-1 rounded-lg py-1 text-[10px] font-medium text-[#67a0ff] hover:text-[#8bb7ff]"
+              >
+                <Eye size={12} />
+                Xem ảnh điện và nước
+              </button>
             </article>
           ))}
         </div>
@@ -296,9 +340,313 @@ export default function ZaloClient({
         </div>
       )}
 
+      {viewing && (
+        <div
+          className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+          onMouseDown={() => setViewing(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="zalo-history-title"
+        >
+          <div
+            className="glass flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-white/[0.08]"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-border px-6 py-4">
+              <div>
+                <h3 id="zalo-history-title" className="font-semibold text-white">
+                  Lịch sử ảnh — {viewing.tenantName}
+                </h3>
+                <p className="mt-1 text-xs text-text-muted">
+                  Phòng {viewing.roomNumber} · {viewing.buildingName}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setViewing(null)}
+                className="rounded-lg p-2 text-text-muted hover:bg-white/[0.06] hover:text-white"
+                aria-label="Đóng lịch sử"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="overflow-y-auto p-5">
+              <MeterHistory
+                submissions={viewing.submissions}
+                onImageClick={setFullImage}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {fullImage && (
+        <div
+          className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/90 p-4"
+          onClick={() => setFullImage(null)}
+        >
+          <img
+            src={fullImage}
+            alt="Ảnh công tơ kích thước đầy đủ"
+            className="max-h-full max-w-full rounded-xl object-contain"
+          />
+          <button
+            type="button"
+            onClick={() => setFullImage(null)}
+            className="absolute right-5 top-5 rounded-full bg-black/50 p-2 text-white"
+            aria-label="Đóng ảnh"
+          >
+            <X size={20} />
+          </button>
+        </div>
+      )}
+
       {toast && <Toast result={toast} onClose={() => setToast(null)} />}
     </div>
   );
+}
+
+type MeterKind = "electric" | "water";
+
+function MeterHistory({
+  submissions,
+  onImageClick,
+}: {
+  submissions: ZaloSubmissionView[];
+  onImageClick: (url: string) => void;
+}) {
+  const visibleSubmissions = getVisibleSubmissions(submissions);
+
+  return (
+    <div className="grid gap-5 lg:grid-cols-2">
+      <MeterColumn
+        kind="electric"
+        title="Điện"
+        icon={Zap}
+        submissions={visibleSubmissions}
+        onImageClick={onImageClick}
+      />
+      <MeterColumn
+        kind="water"
+        title="Nước"
+        icon={Droplets}
+        submissions={visibleSubmissions}
+        onImageClick={onImageClick}
+      />
+    </div>
+  );
+}
+
+function MeterColumn({
+  kind,
+  title,
+  icon: Icon,
+  submissions,
+  onImageClick,
+}: {
+  kind: MeterKind;
+  title: string;
+  icon: typeof Zap;
+  submissions: ZaloSubmissionView[];
+  onImageClick: (url: string) => void;
+}) {
+  const matching = submissions.filter((submission) =>
+    submissionKinds(submission).includes(kind)
+  );
+
+  return (
+    <section className="rounded-2xl border border-white/[0.07] bg-white/[0.015] p-4">
+      <div className="mb-4 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-accent/10 text-accent">
+            <Icon size={17} />
+          </span>
+          <div>
+            <h4 className="text-sm font-semibold text-white">{title}</h4>
+            <p className="text-[10px] text-text-muted">
+              Ảnh đã xác nhận và ảnh mới nhất đang chờ
+            </p>
+          </div>
+        </div>
+        <span className="rounded-full bg-white/[0.06] px-2 py-1 text-[10px] text-text-muted">
+          {matching.length} ảnh
+        </span>
+      </div>
+      {matching.length ? (
+        <div className="space-y-4">
+          {matching.map((submission) => (
+            <SubmissionCard
+              key={`${kind}-${submission.id}`}
+              submission={submission}
+              kind={kind}
+              onImageClick={onImageClick}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="flex min-h-40 flex-col items-center justify-center rounded-xl border border-dashed border-white/[0.07] text-center">
+          <ImageIcon size={24} className="text-text-muted" />
+          <p className="mt-2 text-xs text-text-muted">
+            Chưa có ảnh {title.toLocaleLowerCase("vi")} phù hợp.
+          </p>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function SubmissionCard({
+  submission,
+  kind,
+  onImageClick,
+}: {
+  submission: ZaloSubmissionView;
+  kind: MeterKind;
+  onImageClick: (url: string) => void;
+}) {
+  const displayValues =
+    submission.confirmedValues.length > 0
+      ? submission.confirmedValues
+          .filter((value) => serviceKind(value.serviceName) === kind)
+          .map((value) => ({
+            label: value.serviceName,
+            value: value.value,
+            unit: value.unit,
+            confirmed: true,
+          }))
+      : submission.aiReadings
+          .filter((value) => value.type === kind)
+          .map((value) => ({
+            label: kind === "electric" ? "Điện" : "Nước",
+            value: value.value,
+            unit: value.unit,
+            confirmed: false,
+          }));
+
+  return (
+    <article className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-4">
+      {submission.imageUrl ? (
+        <button
+          type="button"
+          onClick={() => onImageClick(submission.imageUrl!)}
+          className="group relative h-48 w-full overflow-hidden rounded-xl border border-white/[0.08] bg-black/20"
+        >
+          <img
+            src={submission.imageUrl}
+            alt={`Ảnh công tơ phòng ${submission.roomNumber}`}
+            className="h-full w-full object-cover transition group-hover:scale-[1.03]"
+          />
+          <span className="absolute inset-x-0 bottom-0 bg-black/65 px-3 py-2 text-[10px] text-white">
+            Bấm để xem ảnh đầy đủ
+          </span>
+        </button>
+      ) : (
+        <div className="flex h-48 items-center justify-center rounded-xl border border-dashed border-white/[0.08] text-text-muted">
+          <ImageIcon size={24} />
+        </div>
+      )}
+      <div className="mt-4 min-w-0">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <p className="text-sm font-semibold text-white">
+              Phòng {submission.roomNumber} · {submission.buildingName}
+            </p>
+            <p className="mt-1 text-[10px] text-text-muted">
+              Gửi lúc {formatDateTime(submission.createdAt)} · Kỳ{" "}
+              {submission.billingMonth.slice(0, 7)}
+            </p>
+          </div>
+          <span className="rounded-full bg-white/[0.07] px-2.5 py-1 text-[10px] font-semibold text-text-secondary">
+            {meterStatusLabel[submission.status] ?? submission.status}
+          </span>
+        </div>
+        <div className="mt-4 grid gap-2 sm:grid-cols-2">
+          {displayValues.map((value, index) => (
+            <div
+              key={`${value.label}-${index}`}
+              className="rounded-xl border border-white/[0.06] p-3"
+            >
+              <p className="text-[10px] text-text-muted">
+                {value.confirmed ? "Đã xác nhận" : "AI đọc được"} · {value.label}
+              </p>
+              <p className="mt-1 text-lg font-bold text-white">
+                {value.value.toLocaleString("vi-VN")}{" "}
+                <span className="text-xs font-medium text-text-muted">
+                  {value.unit}
+                </span>
+              </p>
+            </div>
+          ))}
+        </div>
+        {!displayValues.length && (
+          <p className="mt-4 text-xs text-text-muted">
+            Chưa có chỉ số được đọc hoặc xác nhận.
+          </p>
+        )}
+        {submission.errorMessage && (
+          <p className="mt-3 rounded-lg bg-red-500/10 p-2 text-[10px] text-red-400">
+            {submission.errorMessage}
+          </p>
+        )}
+        <p className="mt-3 text-[10px] text-text-muted">
+          {submission.confirmedAt
+            ? `Xác nhận lúc ${formatDateTime(submission.confirmedAt)}`
+            : submission.aiProvider
+              ? `AI: ${submission.aiProvider}${submission.aiModel ? ` · ${submission.aiModel}` : ""}`
+              : "Chưa có kết quả AI"}
+        </p>
+      </div>
+    </article>
+  );
+}
+
+function getVisibleSubmissions(submissions: ZaloSubmissionView[]) {
+  const confirmed = submissions.filter(
+    (submission) => submission.status === "confirmed"
+  );
+  const latestPending = submissions.find((submission) =>
+    ["processing", "awaiting_confirmation"].includes(submission.status)
+  );
+
+  return latestPending
+    ? [
+        latestPending,
+        ...confirmed.filter((submission) => submission.id !== latestPending.id),
+      ]
+    : confirmed;
+}
+
+function submissionKinds(submission: ZaloSubmissionView): MeterKind[] {
+  const kinds = new Set<MeterKind>();
+  for (const value of submission.confirmedValues) {
+    const kind = serviceKind(value.serviceName);
+    if (kind) kinds.add(kind);
+  }
+  if (submission.confirmedValues.length > 0) return [...kinds];
+  for (const reading of submission.aiReadings) {
+    if (reading.type === "electric" || reading.type === "water") {
+      kinds.add(reading.type);
+    }
+  }
+  return [...kinds];
+}
+
+function serviceKind(value: string): MeterKind | null {
+  const normalized = value
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .replaceAll("đ", "d")
+    .toLocaleLowerCase("vi");
+  if (normalized.includes("dien")) return "electric";
+  if (normalized.includes("nuoc")) return "water";
+  return null;
+}
+
+function formatDateTime(value: string) {
+  return new Intl.DateTimeFormat("vi-VN", {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(new Date(value));
 }
 
 function Stat({
