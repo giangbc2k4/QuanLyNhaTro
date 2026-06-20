@@ -29,6 +29,7 @@ type ZaloMessage = {
   date?: number;
   text?: string;
   photo?: string;
+  photo_url?: string;
   caption?: string;
 };
 
@@ -53,6 +54,10 @@ function webhookMessage(payload: ZaloWebhook) {
 
 function webhookEventName(payload: ZaloWebhook) {
   return payload.result?.event_name ?? payload.event_name ?? null;
+}
+
+function messageImageUrl(message: ZaloMessage) {
+  return message.photo_url || message.photo || "";
 }
 
 function currentBillingMonth() {
@@ -580,6 +585,7 @@ async function processImage(
 async function processWebhook(payload: ZaloWebhook) {
   const message = webhookMessage(payload);
   const userId = message?.chat?.id || message?.from?.id || "";
+  const imageUrl = message ? messageImageUrl(message) : "";
   console.log(
     JSON.stringify({
       level: "info",
@@ -588,7 +594,7 @@ async function processWebhook(payload: ZaloWebhook) {
       hasMessage: Boolean(message),
       hasChatId: Boolean(userId),
       hasText: Boolean(message?.text),
-      hasPhoto: Boolean(message?.photo),
+      hasPhoto: Boolean(imageUrl),
     })
   );
   if (!message || !userId) {
@@ -632,7 +638,15 @@ async function processWebhook(payload: ZaloWebhook) {
   if (/^OK$/i.test(text)) return confirmLatest(userId, true);
   if (/^SAI$/i.test(text)) return confirmLatest(userId, false);
 
-  if (message.photo) return processImage(message, userId, message.photo);
+  if (imageUrl) return processImage(message, userId, imageUrl);
+
+  if (webhookEventName(payload) === "message.image.received") {
+    await sendZaloText(
+      userId,
+      "Bot đã nhận sự kiện ảnh nhưng Zalo không gửi kèm đường dẫn ảnh. Vui lòng thử gửi lại ảnh gốc thay vì chuyển tiếp."
+    );
+    return;
+  }
 
   await sendZaloText(
     userId,
