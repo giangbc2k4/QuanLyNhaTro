@@ -25,15 +25,13 @@ import {
   unlinkZaloAction,
   type ZaloActionResult,
 } from "@/app/dashboard/zalo/actions";
-import { formatDate } from "@/lib/design-system";
+import { formatDate } from "@/lib/format";
+import type {
+  ContractStatus,
+  MeterSubmissionStatus,
+} from "@/lib/domain-types";
 
-type ContractStatus =
-  | "draft"
-  | "active"
-  | "expiring"
-  | "expired"
-  | "terminated";
-
+// Một liên kết Zalo kèm hợp đồng và lịch sử ảnh để chủ nhà đối chiếu.
 export interface ZaloLinkView {
   id: string;
   zaloUserId: string;
@@ -47,7 +45,7 @@ export interface ZaloLinkView {
   roomNumber: string;
   buildingName: string;
   buildingAddress: string;
-  latestSubmissionStatus: string | null;
+  latestSubmissionStatus: MeterSubmissionStatus | null;
   latestSubmissionAt: string | null;
   submissions: ZaloSubmissionView[];
 }
@@ -55,7 +53,7 @@ export interface ZaloLinkView {
 export interface ZaloSubmissionView {
   id: string;
   billingMonth: string;
-  status: string;
+  status: MeterSubmissionStatus;
   imageUrl: string | null;
   roomNumber: string;
   buildingName: string;
@@ -86,7 +84,7 @@ const statusLabel: Record<ContractStatus, string> = {
   terminated: "Đã kết thúc",
 };
 
-const meterStatusLabel: Record<string, string> = {
+const meterStatusLabel: Record<MeterSubmissionStatus, string> = {
   processing: "Đang đọc ảnh",
   awaiting_confirmation: "Chờ xác nhận",
   confirmed: "Đã xác nhận",
@@ -387,6 +385,8 @@ export default function ZaloClient({
           className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/90 p-4"
           onClick={() => setFullImage(null)}
         >
+          {/* Signed private Storage URL: keep native img to avoid proxying it through Next Image. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={fullImage}
             alt="Ảnh công tơ kích thước đầy đủ"
@@ -652,6 +652,8 @@ function SubmissionCard({
           onClick={() => onImageClick(submission.imageUrl!)}
           className="group relative h-48 w-full overflow-hidden rounded-xl border border-white/[0.08] bg-black/20"
         >
+          {/* Signed private Storage URL: keep native img to avoid proxying it through Next Image. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={submission.imageUrl}
             alt={`Ảnh công tơ phòng ${submission.roomNumber}`}

@@ -26,15 +26,13 @@ import {
   type ContractActionResult,
   type ContractInput,
 } from "@/app/dashboard/contracts/actions";
-import { formatDate, formatVND } from "@/lib/design-system";
+import { formatDate, formatVND } from "@/lib/format";
+import type {
+  ContractStatus,
+  ServiceBillingType,
+} from "@/lib/domain-types";
 
-type ContractStatus =
-  | "draft"
-  | "active"
-  | "expiring"
-  | "expired"
-  | "terminated";
-
+// View model của hợp đồng, tách khỏi tên cột snake_case trong PostgreSQL.
 export interface ContractView {
   id: string;
   code: string;
@@ -71,7 +69,7 @@ export interface ContractView {
     service_name: string;
     unit: string;
     price: number;
-    billing_type: "metered" | "fixed" | "per_person" | "free";
+    billing_type: ServiceBillingType;
   }>;
 }
 
@@ -283,6 +281,7 @@ export default function ContractsClient({
   );
 }
 
+// Quy trình tạo hợp đồng gồm phòng, người thuê, thời hạn và chỉ số bàn giao.
 function CreateContractModal({
   rooms, tenants, pending, onClose, onSubmit,
 }: {
@@ -481,6 +480,7 @@ function CreateContractModal({
   );
 }
 
+// Bản xem chi tiết và bản in hợp đồng pháp lý.
 function ContractDetail({ contract, owner, pending, onClose, onTerminate }: { contract: ContractView; owner: OwnerContractInfo; pending: boolean; onClose: () => void; onTerminate: () => void }) {
   return (
     <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm print:static print:block print:bg-white print:p-0">

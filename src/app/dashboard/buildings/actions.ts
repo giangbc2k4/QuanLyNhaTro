@@ -1,12 +1,16 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createClient } from "@/lib/supabase/server";
+import type { RoomOperationalStatus } from "@/lib/domain-types";
+import { getAuthenticatedClient } from "@/lib/server/auth";
+import type { ServerActionResult } from "@/lib/server/action-result";
+import {
+  cleanText,
+  isUuid,
+} from "@/lib/server/action-utils";
 
 const BUILDINGS_PATH = "/dashboard/buildings";
-const roomStatuses = ["vacant", "maintenance"] as const;
-
-type RoomStatus = (typeof roomStatuses)[number];
+const roomStatuses = ["vacant", "maintenance"] as const satisfies readonly RoomOperationalStatus[];
 
 export interface BuildingInput {
   id?: string;
@@ -20,27 +24,14 @@ export interface RoomInput {
   buildingId: string;
   number: string;
   price: number;
-  status: RoomStatus;
+  status: RoomOperationalStatus;
   floor: number | null;
   area: number | null;
   description: string;
   serviceIds: string[];
 }
 
-export interface ActionResult {
-  success: boolean;
-  message: string;
-}
-
-function cleanText(value: string, maxLength: number) {
-  return value.trim().slice(0, maxLength);
-}
-
-function isUuid(value: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-    value
-  );
-}
+export type ActionResult = ServerActionResult;
 
 function databaseErrorMessage(
   code: string | undefined,
@@ -57,21 +48,10 @@ function databaseErrorMessage(
   return fallback;
 }
 
-async function authenticatedClient() {
-  const supabase = await createClient();
-  const { data, error } = await supabase.auth.getUser();
-
-  if (error || !data.user) {
-    return { supabase, user: null };
-  }
-
-  return { supabase, user: data.user };
-}
-
 export async function saveBuildingAction(
   input: BuildingInput
 ): Promise<ActionResult> {
-  const { supabase, user } = await authenticatedClient();
+  const { supabase, user } = await getAuthenticatedClient();
 
   if (!user) {
     return { success: false, message: "Phiên đăng nhập đã hết hạn." };
@@ -136,7 +116,7 @@ export async function saveBuildingAction(
 export async function deleteBuildingAction(
   buildingId: string
 ): Promise<ActionResult> {
-  const { supabase, user } = await authenticatedClient();
+  const { supabase, user } = await getAuthenticatedClient();
 
   if (!user) {
     return { success: false, message: "Phiên đăng nhập đã hết hạn." };
@@ -166,7 +146,7 @@ export async function deleteBuildingAction(
 }
 
 export async function saveRoomAction(input: RoomInput): Promise<ActionResult> {
-  const { supabase, user } = await authenticatedClient();
+  const { supabase, user } = await getAuthenticatedClient();
 
   if (!user) {
     return { success: false, message: "Phiên đăng nhập đã hết hạn." };
@@ -307,7 +287,7 @@ export async function saveRoomAction(input: RoomInput): Promise<ActionResult> {
 }
 
 export async function deleteRoomAction(roomId: string): Promise<ActionResult> {
-  const { supabase, user } = await authenticatedClient();
+  const { supabase, user } = await getAuthenticatedClient();
 
   if (!user) {
     return { success: false, message: "Phiên đăng nhập đã hết hạn." };

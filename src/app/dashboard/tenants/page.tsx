@@ -1,6 +1,7 @@
 import TenantsClient, {
   type TenantView,
 } from "@/components/tenants/TenantsClient";
+import DashboardDataError from "@/components/dashboard/DashboardDataError";
 import { createClient } from "@/lib/supabase/server";
 
 interface TenantRow {
@@ -69,10 +70,10 @@ export default async function TenantsPage() {
 
   if (error) {
     return (
-      <div className="glass rounded-2xl border border-red-500/20 p-6">
-        <h2 className="font-semibold text-white">Không thể tải người thuê</h2>
-        <p className="mt-2 text-xs text-red-400">{error.message}</p>
-      </div>
+      <DashboardDataError
+        title="Không thể tải người thuê"
+        message={error.message}
+      />
     );
   }
 

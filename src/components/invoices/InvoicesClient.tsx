@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useState, useTransition } from "react";
+import { FormEvent, useState, useTransition } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import {
@@ -27,13 +27,18 @@ import {
   sendInvoiceZaloAction,
   type InvoiceActionResult,
 } from "@/app/dashboard/invoices/actions";
-import { formatDate, formatVND } from "@/lib/design-system";
+import { formatDate, formatVND } from "@/lib/format";
+import type {
+  InvoiceItemType,
+  InvoiceStatus,
+  ServiceBillingType,
+} from "@/lib/domain-types";
 import { useAutoDismiss } from "@/lib/use-auto-dismiss";
 import { invoiceTransferContent, vietQrImageUrl } from "@/lib/vietqr";
 
-type InvoiceStatus = "draft" | "issued" | "paid" | "cancelled";
 type DisplayStatus = InvoiceStatus | "overdue";
 
+// Hóa đơn hiển thị đã bao gồm phòng, người thuê và toàn bộ khoản thu.
 export interface InvoiceView {
   id: string;
   code: string;
@@ -50,10 +55,10 @@ export interface InvoiceView {
   tenantPhone: string;
   items: Array<{
     id: string;
-    type: "rent" | "service" | "additional";
+    type: InvoiceItemType;
     name: string;
     unit: string;
-    billingType: "metered" | "fixed" | "per_person" | "free" | null;
+    billingType: ServiceBillingType | null;
     unitPrice: number;
     previousReading: number | null;
     currentReading: number | null;
@@ -77,7 +82,7 @@ export interface InvoiceContractOption {
     name: string;
     unit: string;
     price: number;
-    billingType: "metered" | "fixed" | "per_person" | "free";
+    billingType: ServiceBillingType;
     previousReading: number;
     suggestedReading: number | null;
   }>;
@@ -280,6 +285,7 @@ function Summary({ label, value, color = "text-white" }: { label: string; value:
   return <div className="glass rounded-2xl border border-white/[0.06] p-5"><p className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">{label}</p><p className={`mt-2 text-xl font-bold ${color}`}>{value}</p></div>;
 }
 
+// Tạo nhiều hóa đơn trong cùng kỳ, giới hạn dữ liệu nhập theo từng hợp đồng.
 function CreateBulkInvoiceModal({ contracts, pending, onClose, onSubmit }: {
   contracts: InvoiceContractOption[];
   pending: boolean;
@@ -356,7 +362,7 @@ function CreateInvoiceModal({ contracts, pending, onClose, onSubmit }: {
   const [additionalName, setAdditionalName] = useState("");
   const [additionalAmount, setAdditionalAmount] = useState(0);
   const [note, setNote] = useState("");
-  const estimatedTotal = useMemo(() => {
+  const estimatedTotal = (() => {
     if (!contract) return 0;
     return contract.monthlyRent + contract.services.reduce((sum, service) => {
       if (service.billingType === "free") return sum;
@@ -369,7 +375,7 @@ function CreateInvoiceModal({ contracts, pending, onClose, onSubmit }: {
         ? Math.round((current - service.previousReading) * service.price)
         : 0);
     }, 0) + Number(additionalAmount || 0);
-  }, [contract, readings, additionalAmount]);
+  })();
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -427,6 +433,7 @@ function CreateInvoiceModal({ contracts, pending, onClose, onSubmit }: {
   );
 }
 
+// Chi tiết, QR thanh toán và bản in được giữ cùng một nguồn dữ liệu InvoiceView.
 function InvoiceDetail({
   invoice,
   paymentAccount,

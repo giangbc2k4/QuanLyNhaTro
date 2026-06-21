@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import DashboardShell from "@/components/dashboard/DashboardShell";
+import { getOwnerOnboardingState } from "@/lib/owner-onboarding";
 import { createClient } from "@/lib/supabase/server";
 
 export default async function DashboardLayout({
@@ -14,6 +15,8 @@ export default async function DashboardLayout({
     redirect("/login");
   }
 
+  const onboarding = await getOwnerOnboardingState(supabase, data.user.id);
+
   const name =
     typeof data.user.user_metadata.full_name === "string"
       ? data.user.user_metadata.full_name
@@ -25,6 +28,7 @@ export default async function DashboardLayout({
         email: data.user.email ?? "",
         name,
       }}
+      onboardingRequired={!onboarding.complete}
     >
       {children}
     </DashboardShell>

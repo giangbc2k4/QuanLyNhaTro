@@ -1,3 +1,7 @@
+import "server-only";
+
+import { errorMessage, logWarning } from "@/lib/server/logger";
+
 type AiProvider = "gemini" | "groq";
 
 export type AiMessage = {
@@ -89,34 +93,6 @@ const cccdPrompt = [
   "Ngày dùng định dạng DD/MM/YYYY. Số CCCD chỉ chứa chữ số.",
   "confidence là số thể hiện độ tin cậy tổng thể từ 0 đến 100.",
 ].join(" ");
-
-const meterSchema = {
-  type: "object",
-  properties: {
-    readings: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          type: {
-            type: "string",
-            enum: ["electric", "water", "unknown"],
-          },
-          value: { type: "number", minimum: 0 },
-          unit: { type: "string" },
-          confidence: { type: "number", minimum: 0, maximum: 100 },
-        },
-        required: ["type", "value", "unit", "confidence"],
-      },
-    },
-    imageQuality: {
-      type: "string",
-      enum: ["good", "blurry", "unreadable"],
-    },
-    notes: { type: "string" },
-  },
-  required: ["readings", "imageQuality", "notes"],
-};
 
 function readKeys(pluralName: string, singularName: string) {
   const raw = process.env[pluralName] || process.env[singularName] || "";
@@ -528,14 +504,10 @@ export async function extractCccdFromImages(front: ImageInput, back: ImageInput)
       return parseCccdResult(result);
     } catch (error) {
       lastError = error;
-      console.warn(
-        JSON.stringify({
-          level: "warning",
-          message: "meter_ocr_provider_failed",
-          provider,
-          error: error instanceof Error ? error.message : String(error),
-        })
-      );
+      logWarning("meter_ocr_provider_failed", {
+        provider,
+        error: errorMessage(error),
+      });
     }
   }
 

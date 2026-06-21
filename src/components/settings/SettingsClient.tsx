@@ -55,9 +55,11 @@ function extension(file: File) {
 export default function SettingsClient({
   initialData,
   banks,
+  onboardingRequired,
 }: {
   initialData: SettingsInitialData;
   banks: VietQrBank[];
+  onboardingRequired: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -86,20 +88,54 @@ export default function SettingsClient({
     accountHolder: initialData.bankAccountHolder,
   });
 
-  function run(action: () => Promise<SettingsActionResult>) {
+  function run(
+    action: () => Promise<SettingsActionResult>,
+    onSuccess?: () => void
+  ) {
     setResult(null);
     startTransition(async () => {
       const response = await action();
       setResult(response);
-      if (response.success) router.refresh();
+      if (response.success) {
+        onSuccess?.();
+        router.refresh();
+      }
     });
   }
 
   async function saveProfile() {
+    if (
+      profile.fullName.trim().length < 2 ||
+      !/^\d{12}$/.test(profile.documentNumber) ||
+      !profile.dateOfBirth ||
+      !profile.gender.trim() ||
+      !profile.hometown.trim() ||
+      !profile.permanentAddress.trim()
+    ) {
+      setResult({
+        success: false,
+        message:
+          "Vui lòng nhập đủ họ tên, CCCD, ngày sinh, giới tính, quê quán và địa chỉ thường trú.",
+      });
+      return;
+    }
+
     const identityDocumentId =
       initialData.identityDocumentId ?? crypto.randomUUID();
     let frontImagePath: string | undefined;
     let backImagePath: string | undefined;
+
+    if (
+      onboardingRequired &&
+      !initialData.hasIdentityImages &&
+      (!images.front || !images.back)
+    ) {
+      setResult({
+        success: false,
+        message: "Vui lòng tải đủ ảnh mặt trước và mặt sau CCCD.",
+      });
+      return;
+    }
 
     if (images.front && images.back) {
       const supabase = createBrowserClient();
@@ -133,8 +169,9 @@ export default function SettingsClient({
       }
     }
 
-    run(() =>
-      saveOwnerProfileAction({
+    run(
+      () =>
+        saveOwnerProfileAction({
         ownerProfileId: initialData.ownerProfileId ?? undefined,
         identityDocumentId,
         fullName: profile.fullName,
@@ -147,7 +184,8 @@ export default function SettingsClient({
         issuedBy: profile.issuedBy,
         frontImagePath,
         backImagePath,
-      })
+        }),
+      () => router.replace("/dashboard")
     );
   }
 
@@ -180,11 +218,27 @@ export default function SettingsClient({
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
+      {onboardingRequired && (
+        <div className="rounded-2xl border border-accent/25 bg-accent/[0.08] p-5">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="mt-0.5 shrink-0 text-accent" size={20} />
+            <div>
+              <h2 className="font-semibold text-white">Hoàn tất hồ sơ để bắt đầu</h2>
+              <p className="mt-1 text-xs leading-5 text-text-secondary">
+                Hãy tải đủ hai mặt CCCD và kiểm tra họ tên, ngày sinh, giới
+                tính, quê quán và địa chỉ thường trú. Thông tin này sẽ được dùng
+                làm Bên A trên hợp đồng.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="flex gap-1 overflow-x-auto rounded-xl border border-white/[0.04] bg-white/[0.03] p-1">
         {tabs.map((tab) => (
           <button
             key={tab.key}
             type="button"
+            disabled={onboardingRequired && tab.key === "bank"}
             onClick={() => {
               setActiveTab(tab.key);
               setResult(null);
@@ -193,7 +247,7 @@ export default function SettingsClient({
               activeTab === tab.key
                 ? "bg-accent text-white"
                 : "text-text-muted hover:text-text-secondary"
-            }`}
+            } ${onboardingRequired && tab.key === "bank" ? "cursor-not-allowed opacity-35" : ""}`}
           >
             <tab.icon size={14} /> {tab.label}
           </button>

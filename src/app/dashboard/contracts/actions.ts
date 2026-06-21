@@ -1,7 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createClient } from "@/lib/supabase/server";
+import { getAuthenticatedClient } from "@/lib/server/auth";
+import { isUuid } from "@/lib/server/action-utils";
+import type { ServerActionResult } from "@/lib/server/action-result";
 
 const CONTRACTS_PATH = "/dashboard/contracts";
 
@@ -20,23 +22,12 @@ export interface ContractInput {
   }>;
 }
 
-export interface ContractActionResult {
-  success: boolean;
-  message: string;
-}
-
-function isUuid(value: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-    value
-  );
-}
+export type ContractActionResult = ServerActionResult;
 
 export async function createContractAction(
   input: ContractInput
 ): Promise<ContractActionResult> {
-  const supabase = await createClient();
-  const { data: authData } = await supabase.auth.getUser();
-  const user = authData.user;
+  const { supabase, user } = await getAuthenticatedClient();
   if (!user) return { success: false, message: "Phiên đăng nhập đã hết hạn." };
 
   const rent = Number(input.monthlyRent);
@@ -301,9 +292,7 @@ export async function createContractAction(
 export async function terminateContractAction(
   contractId: string
 ): Promise<ContractActionResult> {
-  const supabase = await createClient();
-  const { data: authData } = await supabase.auth.getUser();
-  const user = authData.user;
+  const { supabase, user } = await getAuthenticatedClient();
   if (!user) return { success: false, message: "Phiên đăng nhập đã hết hạn." };
   if (!isUuid(contractId)) {
     return { success: false, message: "Mã hợp đồng không hợp lệ." };

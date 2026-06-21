@@ -1,43 +1,38 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createClient } from "@/lib/supabase/server";
+import type { ServiceBillingType } from "@/lib/domain-types";
+import { getAuthenticatedClient } from "@/lib/server/auth";
+import type { ServerActionResult } from "@/lib/server/action-result";
+import {
+  isUuid,
+} from "@/lib/server/action-utils";
 
 const SERVICES_PATH = "/dashboard/services";
 const BUILDINGS_PATH = "/dashboard/buildings";
-const billingTypes = ["metered", "fixed", "per_person", "free"] as const;
+const billingTypes = [
+  "metered",
+  "fixed",
+  "per_person",
+  "free",
+] as const satisfies readonly ServiceBillingType[];
 
 export interface ServiceInput {
   id?: string;
   name: string;
   unit: string;
   price: number;
-  billingType: (typeof billingTypes)[number];
+  billingType: ServiceBillingType;
   description: string;
   isActive: boolean;
 }
 
-export interface ServiceActionResult {
-  success: boolean;
-  message: string;
-}
-
-function isUuid(value: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-    value
-  );
-}
-
-async function authenticatedClient() {
-  const supabase = await createClient();
-  const { data, error } = await supabase.auth.getUser();
-  return { supabase, user: error ? null : data.user };
-}
+export type ServiceActionResult = ServerActionResult;
 
 export async function saveServiceAction(
   input: ServiceInput
 ): Promise<ServiceActionResult> {
-  const { supabase, user } = await authenticatedClient();
+  const { supabase, user } = await getAuthenticatedClient();
 
   if (!user) {
     return { success: false, message: "Phiên đăng nhập đã hết hạn." };
@@ -117,7 +112,7 @@ export async function saveServiceAction(
 export async function deleteServiceAction(
   serviceId: string
 ): Promise<ServiceActionResult> {
-  const { supabase, user } = await authenticatedClient();
+  const { supabase, user } = await getAuthenticatedClient();
 
   if (!user) {
     return { success: false, message: "Phiên đăng nhập đã hết hạn." };

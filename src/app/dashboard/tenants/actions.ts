@@ -1,7 +1,12 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createClient } from "@/lib/supabase/server";
+import { getAuthenticatedClient } from "@/lib/server/auth";
+import type { ServerActionResult } from "@/lib/server/action-result";
+import {
+  cleanText,
+  isUuid,
+} from "@/lib/server/action-utils";
 
 const TENANTS_PATH = "/dashboard/tenants";
 
@@ -24,23 +29,10 @@ export interface TenantInput {
   backImagePath?: string;
 }
 
-export interface TenantActionResult {
-  success: boolean;
-  message: string;
-}
-
-function isUuid(value: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-    value
-  );
-}
-
-function clean(value: string, maxLength: number) {
-  return value.trim().slice(0, maxLength);
-}
+export type TenantActionResult = ServerActionResult;
 
 function nullable(value: string, maxLength: number) {
-  return clean(value, maxLength) || null;
+  return cleanText(value, maxLength) || null;
 }
 
 function normalizePhone(value: string) {
@@ -49,22 +41,16 @@ function normalizePhone(value: string) {
   return digits;
 }
 
-async function authenticatedClient() {
-  const supabase = await createClient();
-  const { data, error } = await supabase.auth.getUser();
-  return { supabase, user: error ? null : data.user };
-}
-
 export async function saveTenantAction(
   input: TenantInput
 ): Promise<TenantActionResult> {
-  const { supabase, user } = await authenticatedClient();
+  const { supabase, user } = await getAuthenticatedClient();
 
   if (!user) {
     return { success: false, message: "Phiên đăng nhập đã hết hạn." };
   }
 
-  const fullName = clean(input.fullName, 150);
+  const fullName = cleanText(input.fullName, 150);
   const phone = normalizePhone(input.phone);
   const documentNumber = input.documentNumber.replace(/\D/g, "").slice(0, 12);
 
@@ -221,7 +207,7 @@ export async function saveTenantAction(
 export async function deleteTenantAction(
   tenantId: string
 ): Promise<TenantActionResult> {
-  const { supabase, user } = await authenticatedClient();
+  const { supabase, user } = await getAuthenticatedClient();
 
   if (!user) {
     return { success: false, message: "Phiên đăng nhập đã hết hạn." };

@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { getOwnerOnboardingState } from "@/lib/owner-onboarding";
 
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });
@@ -34,6 +35,20 @@ export async function updateSession(request: NextRequest) {
     loginUrl.pathname = "/login";
     loginUrl.searchParams.set("redirect", request.nextUrl.pathname);
     return NextResponse.redirect(loginUrl);
+  }
+
+  if (request.nextUrl.pathname !== "/dashboard/settings") {
+    const userId =
+      typeof data.claims.sub === "string" ? data.claims.sub : null;
+    if (userId) {
+      const onboarding = await getOwnerOnboardingState(supabase, userId);
+      if (!onboarding.complete) {
+        const settingsUrl = request.nextUrl.clone();
+        settingsUrl.pathname = "/dashboard/settings";
+        settingsUrl.search = "";
+        return NextResponse.redirect(settingsUrl);
+      }
+    }
   }
 
   return response;

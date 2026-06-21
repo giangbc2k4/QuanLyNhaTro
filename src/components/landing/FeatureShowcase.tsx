@@ -1,12 +1,8 @@
 import {
   ScanEye,
   MessageCircle,
-  FileText,
   QrCode,
   CheckCircle2,
-  Smartphone,
-  Building2,
-  BarChart3,
 } from "lucide-react";
 
 const showcases = [
@@ -301,7 +297,7 @@ export default function FeatureShowcase() {
     <section id="showcase" className="py-24 relative">
       <div className="max-w-7xl mx-auto px-6">
         <div className="space-y-32">
-          {showcases.map((s, i) => {
+          {showcases.map((s) => {
             const Visual = visualMap[s.visual];
             return (
               <div

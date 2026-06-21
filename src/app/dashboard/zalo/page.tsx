@@ -2,7 +2,23 @@ import ZaloClient, {
   type ZaloLinkView,
   type ZaloSubmissionView,
 } from "@/components/zalo/ZaloClient";
+import DashboardDataError from "@/components/dashboard/DashboardDataError";
+import type { MeterSubmissionStatus } from "@/lib/domain-types";
 import { createClient } from "@/lib/supabase/server";
+
+const meterSubmissionStatuses = new Set<MeterSubmissionStatus>([
+  "processing",
+  "awaiting_confirmation",
+  "confirmed",
+  "rejected",
+  "failed",
+]);
+
+function meterSubmissionStatus(value: string): MeterSubmissionStatus {
+  return meterSubmissionStatuses.has(value as MeterSubmissionStatus)
+    ? (value as MeterSubmissionStatus)
+    : "failed";
+}
 
 export default async function ZaloPage() {
   const supabase = await createClient();
@@ -46,25 +62,24 @@ export default async function ZaloPage() {
   const error = linksResult.error ?? submissionsResult.error;
   if (error) {
     return (
-      <div className="glass rounded-2xl border border-red-500/20 p-6">
-        <h2 className="font-semibold text-white">
-          Không thể tải dữ liệu Zalo Bot
-        </h2>
-        <p className="mt-2 text-xs text-red-400">{error.message}</p>
-        <p className="mt-3 text-xs text-text-muted">
-          Hãy chắc chắn migration 0014_zalo_meter_readings.sql đã được chạy.
-        </p>
-      </div>
+      <DashboardDataError
+        title="Không thể tải dữ liệu Zalo Bot"
+        message={error.message}
+        hint="Hãy kiểm tra database và cấu hình Zalo Bot trên server."
+      />
     );
   }
 
   const latestSubmissionByZalo = new Map<
     string,
-    { status: string; created_at: string }
+    { status: MeterSubmissionStatus; created_at: string }
   >();
   for (const submission of submissionsResult.data ?? []) {
     if (!latestSubmissionByZalo.has(submission.zalo_user_id)) {
-      latestSubmissionByZalo.set(submission.zalo_user_id, submission);
+      latestSubmissionByZalo.set(submission.zalo_user_id, {
+        status: meterSubmissionStatus(submission.status),
+        created_at: submission.created_at,
+      });
     }
   }
 
@@ -135,7 +150,7 @@ export default async function ZaloPage() {
     const view: ZaloSubmissionView = {
       id: submission.id,
       billingMonth: submission.billing_month,
-      status: submission.status,
+      status: meterSubmissionStatus(submission.status),
       imageUrl: signedImageBySubmission.get(submission.id) ?? null,
       roomNumber: room?.room_number ?? "—",
       buildingName: building?.name ?? "—",

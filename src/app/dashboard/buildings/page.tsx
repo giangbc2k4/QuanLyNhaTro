@@ -2,6 +2,11 @@ import BuildingsClient, {
   type BuildingView,
   type RoomView,
 } from "@/components/buildings/BuildingsClient";
+import DashboardDataError from "@/components/dashboard/DashboardDataError";
+import type {
+  RoomOperationalStatus,
+  ServiceBillingType,
+} from "@/lib/domain-types";
 import { createClient } from "@/lib/supabase/server";
 
 interface BuildingRow {
@@ -39,7 +44,7 @@ interface ServiceRow {
   name: string;
   unit: string;
   price: number;
-  billing_type: "metered" | "fixed" | "free";
+  billing_type: ServiceBillingType;
   is_active: boolean;
 }
 
@@ -99,17 +104,11 @@ export default async function BuildingsPage() {
 
   if (queryError) {
     return (
-      <div className="glass rounded-2xl border border-red-500/20 p-6">
-        <h2 className="text-base font-semibold text-white">
-          Không thể tải dữ liệu nhà và phòng
-        </h2>
-        <p className="mt-2 text-xs leading-relaxed text-red-400">
-          {queryError.message}
-        </p>
-        <p className="mt-3 text-xs text-text-muted">
-          Hãy kiểm tra đã chạy migration, bật Data API và đăng nhập đúng tài khoản.
-        </p>
-      </div>
+      <DashboardDataError
+        title="Không thể tải dữ liệu nhà và phòng"
+        message={queryError.message}
+        hint="Hãy kiểm tra migration, Data API và phiên đăng nhập Supabase."
+      />
     );
   }
 
@@ -137,7 +136,9 @@ export default async function BuildingsPage() {
     buildingId: room.building_id,
     number: room.room_number,
     price: room.monthly_rent,
-    status: room.status === "maintenance" ? "maintenance" : "vacant",
+    status: (room.status === "maintenance"
+      ? "maintenance"
+      : "vacant") satisfies RoomOperationalStatus,
     tenant: tenantByRoom.get(room.id) ?? null,
     floor: room.floor_number,
     area: room.area_m2,

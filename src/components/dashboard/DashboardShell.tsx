@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -32,18 +32,25 @@ const navItems = [
 
 interface DashboardShellProps {
   children: React.ReactNode;
+  onboardingRequired: boolean;
   user: {
     email: string;
     name: string;
   };
 }
 
-export default function DashboardShell({ children, user }: DashboardShellProps) {
+export default function DashboardShell({ children, onboardingRequired, user }: DashboardShellProps) {
   const router = useRouter();
   const pathname = usePathname();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+
+  useEffect(() => {
+    if (onboardingRequired && pathname !== "/dashboard/settings") {
+      router.replace("/dashboard/settings");
+    }
+  }, [onboardingRequired, pathname, router]);
 
   const handleLogout = async () => {
     setLoggingOut(true);
@@ -60,6 +67,19 @@ export default function DashboardShell({ children, user }: DashboardShellProps) 
   )?.key ?? "dashboard";
 
   const pageTitle = navItems.find((item) => item.key === activeKey)?.label ?? "Tổng quan";
+
+  if (onboardingRequired && pathname !== "/dashboard/settings") {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#060b18]">
+        <div className="text-center">
+          <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+          <p className="mt-3 text-sm text-text-secondary">
+            Đang mở phần hoàn tất hồ sơ...
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#060b18] flex">
@@ -93,15 +113,17 @@ export default function DashboardShell({ children, user }: DashboardShellProps) 
         <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
           {navItems.map((item) => {
             const isActive = item.key === activeKey;
+            const isLocked = onboardingRequired && item.key !== "settings";
             return (
               <Link
                 key={item.key}
-                href={item.href}
+                href={isLocked ? "/dashboard/settings" : item.href}
                 onClick={() => setSidebarOpen(false)}
                 className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 group
                   ${collapsed ? "justify-center px-2" : ""}
+                  ${isLocked ? "cursor-not-allowed opacity-35" : ""}
                   ${isActive ? "bg-accent text-white shadow-md shadow-accent/25" : "text-text-secondary hover:text-white hover:bg-white/[0.04]"}`}
-                title={collapsed ? item.label : undefined}
+                title={isLocked ? "Hoàn tất hồ sơ chủ nhà trước" : collapsed ? item.label : undefined}
               >
                 <item.icon size={20} className={`flex-shrink-0 ${isActive ? "" : "group-hover:scale-110 transition-transform"}`} />
                 {!collapsed && <span>{item.label}</span>}

@@ -1,27 +1,18 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createClient } from "@/lib/supabase/server";
+import { getAuthenticatedClient } from "@/lib/server/auth";
+import { isUuid } from "@/lib/server/action-utils";
+import type { ServerActionResult } from "@/lib/server/action-result";
 
 const ZALO_PATH = "/dashboard/zalo";
 
-export interface ZaloActionResult {
-  success: boolean;
-  message: string;
-}
-
-function isUuid(value: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-    value
-  );
-}
+export type ZaloActionResult = ServerActionResult;
 
 export async function unlinkZaloAction(
   linkId: string
 ): Promise<ZaloActionResult> {
-  const supabase = await createClient();
-  const { data: authData } = await supabase.auth.getUser();
-  const user = authData.user;
+  const { supabase, user } = await getAuthenticatedClient();
   if (!user) {
     return { success: false, message: "Phiên đăng nhập đã hết hạn." };
   }
@@ -44,4 +35,3 @@ export async function unlinkZaloAction(
   revalidatePath(ZALO_PATH);
   return { success: true, message: "Đã gỡ liên kết Zalo khỏi hợp đồng." };
 }
-

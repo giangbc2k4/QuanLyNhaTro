@@ -1,6 +1,8 @@
 import ServicesClient, {
   type ServiceView,
 } from "@/components/services/ServicesClient";
+import DashboardDataError from "@/components/dashboard/DashboardDataError";
+import type { ServiceBillingType } from "@/lib/domain-types";
 import { createClient } from "@/lib/supabase/server";
 
 interface ServiceRow {
@@ -8,7 +10,7 @@ interface ServiceRow {
   name: string;
   unit: string;
   price: number;
-  billing_type: "metered" | "fixed" | "per_person" | "free";
+  billing_type: ServiceBillingType;
   description: string | null;
   is_active: boolean;
   is_default: boolean;
@@ -44,13 +46,11 @@ export default async function ServicesPage() {
 
   if (error) {
     return (
-      <div className="glass rounded-2xl border border-red-500/20 p-6">
-        <h2 className="font-semibold text-white">Không thể tải dịch vụ</h2>
-        <p className="mt-2 text-xs text-red-400">{error.message}</p>
-        <p className="mt-3 text-xs text-text-muted">
-          Hãy chạy migration 0004_services_and_room_services.sql trong Supabase.
-        </p>
-      </div>
+      <DashboardDataError
+        title="Không thể tải dịch vụ"
+        message={error.message}
+        hint="Hãy kiểm tra đã chạy đầy đủ file database NhaTroPro trên Supabase."
+      />
     );
   }
 

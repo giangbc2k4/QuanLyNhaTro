@@ -19,6 +19,7 @@ import {
   Zap,
 } from "lucide-react";
 import { useAutoDismiss } from "@/lib/use-auto-dismiss";
+import type { ServiceBillingType } from "@/lib/domain-types";
 import {
   deleteServiceAction,
   saveServiceAction,
@@ -31,7 +32,7 @@ export interface ServiceView {
   name: string;
   unit: string;
   price: number;
-  billingType: "metered" | "fixed" | "per_person" | "free";
+  billingType: ServiceBillingType;
   description: string | null;
   isActive: boolean;
   isDefault: boolean;

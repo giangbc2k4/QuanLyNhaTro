@@ -4,6 +4,7 @@ import ContractsClient, {
   type RoomOption,
   type TenantOption,
 } from "@/components/contracts/ContractsClient";
+import DashboardDataError from "@/components/dashboard/DashboardDataError";
 import { createClient } from "@/lib/supabase/server";
 
 export default async function ContractsPage() {
@@ -81,10 +82,10 @@ export default async function ContractsPage() {
     roomMeterReadingsResult.error;
   if (error) {
     return (
-      <div className="glass rounded-2xl border border-red-500/20 p-6">
-        <h2 className="font-semibold text-white">Không thể tải hợp đồng</h2>
-        <p className="mt-2 text-xs text-red-400">{error.message}</p>
-      </div>
+      <DashboardDataError
+        title="Không thể tải hợp đồng"
+        message={error.message}
+      />
     );
   }
 

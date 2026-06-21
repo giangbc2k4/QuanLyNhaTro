@@ -1,7 +1,9 @@
 import SettingsClient, {
   type SettingsInitialData,
 } from "@/components/settings/SettingsClient";
+import DashboardDataError from "@/components/dashboard/DashboardDataError";
 import { createClient } from "@/lib/supabase/server";
+import { isOwnerOnboardingComplete } from "@/lib/owner-onboarding";
 import { getVietQrBanks } from "@/lib/vietqr";
 
 export default async function SettingsPage() {
@@ -37,15 +39,16 @@ export default async function SettingsPage() {
     identityResult.error;
   if (error) {
     return (
-      <div className="glass rounded-2xl border border-red-500/20 p-6">
-        <h2 className="font-semibold text-white">Không thể tải cài đặt</h2>
-        <p className="mt-2 text-xs text-red-400">{error.message}</p>
-      </div>
+      <DashboardDataError
+        title="Không thể tải cài đặt"
+        message={error.message}
+      />
     );
   }
 
   const profile = profileResult.data;
   const identity = identityResult.data;
+  const onboardingRequired = !isOwnerOnboardingComplete(profile, identity);
   const initialData: SettingsInitialData = {
     ownerProfileId: profile?.id ?? null,
     identityDocumentId: identity?.id ?? null,
@@ -75,5 +78,11 @@ export default async function SettingsPage() {
     bankAccountHolder: profile?.bank_account_holder ?? "",
   };
 
-  return <SettingsClient initialData={initialData} banks={banks} />;
+  return (
+    <SettingsClient
+      initialData={initialData}
+      banks={banks}
+      onboardingRequired={onboardingRequired}
+    />
+  );
 }

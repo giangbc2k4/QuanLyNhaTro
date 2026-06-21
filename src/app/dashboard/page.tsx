@@ -14,8 +14,9 @@ import {
   Wrench,
   Zap,
 } from "lucide-react";
+import DashboardDataError from "@/components/dashboard/DashboardDataError";
 import { createClient } from "@/lib/supabase/server";
-import { formatDate, formatVND, formatVNDShort } from "@/lib/design-system";
+import { formatVND, formatVNDShort } from "@/lib/format";
 
 const activeContractStatuses = ["active", "expiring"];
 
@@ -125,10 +126,10 @@ export default async function DashboardPage() {
     readingsResult.error;
   if (error) {
     return (
-      <div className="glass rounded-2xl border border-red-500/20 p-6">
-        <h2 className="font-semibold text-white">Không thể tải trang tổng quan</h2>
-        <p className="mt-2 text-xs text-red-400">{error.message}</p>
-      </div>
+      <DashboardDataError
+        title="Không thể tải trang tổng quan"
+        message={error.message}
+      />
     );
   }
 

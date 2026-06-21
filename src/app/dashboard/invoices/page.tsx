@@ -3,6 +3,7 @@ import InvoicesClient, {
   type InvoicePaymentAccount,
   type InvoiceView,
 } from "@/components/invoices/InvoicesClient";
+import DashboardDataError from "@/components/dashboard/DashboardDataError";
 import { createClient } from "@/lib/supabase/server";
 import { resolveVietQrBankId } from "@/lib/vietqr";
 
@@ -79,13 +80,11 @@ export default async function InvoicesPage() {
     ownerProfileResult.error;
   if (error) {
     return (
-      <div className="glass rounded-2xl border border-red-500/20 p-6">
-        <h2 className="font-semibold text-white">Không thể tải hóa đơn</h2>
-        <p className="mt-2 text-xs text-red-400">{error.message}</p>
-        <p className="mt-3 text-xs text-text-muted">
-          Hãy chạy migration 0013_invoices.sql trên Supabase trước.
-        </p>
-      </div>
+      <DashboardDataError
+        title="Không thể tải hóa đơn"
+        message={error.message}
+        hint="Hãy kiểm tra đã chạy đầy đủ file database NhaTroPro trên Supabase."
+      />
     );
   }
 

@@ -26,8 +26,13 @@ import {
   type BuildingInput,
   type RoomInput,
 } from "@/app/dashboard/buildings/actions";
-import { formatVND } from "@/lib/design-system";
+import { formatVND } from "@/lib/format";
+import type {
+  RoomOperationalStatus,
+  ServiceBillingType,
+} from "@/lib/domain-types";
 
+// Dữ liệu hiển thị đã được Server Component chuẩn hóa từ Supabase.
 export interface BuildingView {
   id: string;
   name: string;
@@ -44,7 +49,7 @@ export interface RoomView {
   buildingId: string;
   number: string;
   price: number;
-  status: "vacant" | "maintenance";
+  status: RoomOperationalStatus;
   tenant: string | null;
   floor: number | null;
   area: number | null;
@@ -57,7 +62,7 @@ export interface ServiceOption {
   name: string;
   unit: string;
   price: number;
-  billingType: "metered" | "fixed" | "free";
+  billingType: ServiceBillingType;
   isActive: boolean;
 }
 
@@ -92,6 +97,7 @@ function parseMoneyInput(value: string) {
   return digits ? Number(digits) : 0;
 }
 
+// Màn hình chính: chọn tòa nhà, lọc phòng và điều phối các thao tác.
 export default function BuildingsClient({
   buildings,
   rooms,
@@ -589,6 +595,7 @@ export default function BuildingsClient({
   );
 }
 
+// Các biểu mẫu và hộp thoại chỉ phục vụ màn hình Nhà và phòng.
 function BuildingFormModal({
   building,
   pending,

@@ -1,16 +1,19 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createClient } from "@/lib/supabase/server";
-import { invoiceTransferContent } from "@/lib/vietqr";
+import { getAuthenticatedClient } from "@/lib/server/auth";
+import { isUuid } from "@/lib/server/action-utils";
+import type { ServerActionResult } from "@/lib/server/action-result";
+import {
+  invoiceTransferContent,
+  resolveVietQrBankId,
+  vietQrImageUrl,
+} from "@/lib/vietqr";
 import { sendZaloPhoto } from "@/lib/zalo/client";
 
 const INVOICES_PATH = "/dashboard/invoices";
 
-export interface InvoiceActionResult {
-  success: boolean;
-  message: string;
-}
+export type InvoiceActionResult = ServerActionResult;
 
 export interface CreateInvoiceInput {
   contractId: string;
@@ -29,73 +32,10 @@ export interface CreateBulkInvoicesInput {
   readingsByContract: Record<string, Record<string, number>>;
 }
 
-function isUuid(value: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-    value
-  );
-}
-
-function normalizeBankName(value: string) {
-  return value
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .replace(/[đĐ]/g, "d")
-    .replace(/[^a-zA-Z0-9]/g, "")
-    .toLowerCase();
-}
-
-async function resolveVietQrBankId(bankName: string) {
-  const response = await fetch("https://api.vietqr.io/v2/banks", {
-    signal: AbortSignal.timeout(10_000),
-    next: { revalidate: 86_400 },
-  });
-  if (!response.ok) return bankName.trim();
-  const body = (await response.json()) as {
-    data?: Array<{
-      bin?: string;
-      code?: string;
-      shortName?: string;
-      short_name?: string;
-      name?: string;
-    }>;
-  };
-  const expected = normalizeBankName(bankName);
-  const bank = (body.data ?? []).find((item) =>
-    [item.bin, item.code, item.shortName, item.short_name, item.name]
-      .filter(Boolean)
-      .some((value) => normalizeBankName(String(value)) === expected)
-  ) ?? (body.data ?? []).find((item) =>
-    [item.code, item.shortName, item.short_name, item.name]
-      .filter(Boolean)
-      .some((value) => {
-        const normalized = normalizeBankName(String(value));
-        return normalized.includes(expected) || expected.includes(normalized);
-      })
-  );
-  return bank?.bin || bank?.code || bankName.trim();
-}
-
-function vietQrImageUrl(input: {
-  bankId: string;
-  accountNumber: string;
-  accountName: string;
-  amount: number;
-  description: string;
-}) {
-  const params = new URLSearchParams({
-    amount: String(input.amount),
-    addInfo: input.description,
-    accountName: input.accountName,
-  });
-  return `https://img.vietqr.io/image/${encodeURIComponent(input.bankId)}-${encodeURIComponent(input.accountNumber)}-compact2.png?${params.toString()}`;
-}
-
 export async function createInvoiceAction(
   input: CreateInvoiceInput
 ): Promise<InvoiceActionResult> {
-  const supabase = await createClient();
-  const { data: authData } = await supabase.auth.getUser();
-  const user = authData.user;
+  const { supabase, user } = await getAuthenticatedClient();
   if (!user) return { success: false, message: "Phiên đăng nhập đã hết hạn." };
 
   const billingMonth = /^\d{4}-\d{2}$/.test(input.billingMonth)
@@ -325,9 +265,7 @@ export async function createInvoiceAction(
 export async function markInvoicePaidAction(
   invoiceId: string
 ): Promise<InvoiceActionResult> {
-  const supabase = await createClient();
-  const { data: authData } = await supabase.auth.getUser();
-  const user = authData.user;
+  const { supabase, user } = await getAuthenticatedClient();
   if (!user || !isUuid(invoiceId)) {
     return { success: false, message: "Yêu cầu không hợp lệ." };
   }
@@ -351,9 +289,7 @@ export async function markInvoicePaidAction(
 export async function cancelInvoiceAction(
   invoiceId: string
 ): Promise<InvoiceActionResult> {
-  const supabase = await createClient();
-  const { data: authData } = await supabase.auth.getUser();
-  const user = authData.user;
+  const { supabase, user } = await getAuthenticatedClient();
   if (!user || !isUuid(invoiceId)) {
     return { success: false, message: "Yêu cầu không hợp lệ." };
   }
@@ -377,9 +313,7 @@ export async function cancelInvoiceAction(
 export async function deletePaidInvoiceAction(
   invoiceId: string
 ): Promise<InvoiceActionResult> {
-  const supabase = await createClient();
-  const { data: authData } = await supabase.auth.getUser();
-  const user = authData.user;
+  const { supabase, user } = await getAuthenticatedClient();
   if (!user || !isUuid(invoiceId)) {
     return { success: false, message: "Yêu cầu không hợp lệ." };
   }
@@ -416,27 +350,37 @@ export async function createBulkInvoicesAction(
   }
 
   let created = 0;
-  const skipped: string[] = [];
-  for (const contractId of contractIds) {
-    const result = await createInvoiceAction({
-      contractId,
-      billingMonth: input.billingMonth,
-      dueDate: input.dueDate,
-      note: "",
-      additionalName: "",
-      additionalAmount: 0,
-      readings: input.readingsByContract[contractId] ?? {},
-    });
-    if (result.success) created += 1;
-    else skipped.push(result.message);
+  let skipped = 0;
+  const concurrency = 3;
+
+  for (let offset = 0; offset < contractIds.length; offset += concurrency) {
+    const batch = contractIds.slice(offset, offset + concurrency);
+    const results = await Promise.all(
+      batch.map((contractId) =>
+        createInvoiceAction({
+          contractId,
+          billingMonth: input.billingMonth,
+          dueDate: input.dueDate,
+          note: "",
+          additionalName: "",
+          additionalAmount: 0,
+          readings: input.readingsByContract[contractId] ?? {},
+        })
+      )
+    );
+
+    for (const result of results) {
+      if (result.success) created += 1;
+      else skipped += 1;
+    }
   }
 
   revalidatePath(INVOICES_PATH);
   return {
     success: created > 0,
     message:
-      skipped.length > 0
-        ? `Đã tạo ${created} hóa đơn, bỏ qua ${skipped.length} phòng thiếu dữ liệu hoặc đã có hóa đơn.`
+      skipped > 0
+        ? `Đã tạo ${created} hóa đơn, bỏ qua ${skipped} phòng thiếu dữ liệu hoặc đã có hóa đơn.`
         : `Đã tạo thành công ${created} hóa đơn.`,
   };
 }
@@ -444,9 +388,7 @@ export async function createBulkInvoicesAction(
 export async function sendInvoiceZaloAction(
   invoiceId: string
 ): Promise<InvoiceActionResult> {
-  const supabase = await createClient();
-  const { data: authData } = await supabase.auth.getUser();
-  const user = authData.user;
+  const { supabase, user } = await getAuthenticatedClient();
   if (!user || !isUuid(invoiceId)) {
     return { success: false, message: "Yêu cầu không hợp lệ." };
   }

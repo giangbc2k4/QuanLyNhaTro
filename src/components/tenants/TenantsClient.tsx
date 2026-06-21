@@ -23,6 +23,7 @@ import { useAutoDismiss } from "@/lib/use-auto-dismiss";
 import CccdUpload, { type CccdData } from "@/components/shared/CccdUpload";
 import { deleteLargeDraft } from "@/lib/browser-draft";
 import { createClient as createBrowserClient } from "@/lib/supabase/client";
+import type { IdentityVerificationStatus } from "@/lib/domain-types";
 import {
   deleteTenantAction,
   saveTenantAction,
@@ -30,6 +31,7 @@ import {
   type TenantInput,
 } from "@/app/dashboard/tenants/actions";
 
+// Hồ sơ hiển thị kết hợp tenants, identity_documents và trạng thái hợp đồng.
 export interface TenantView {
   id: string;
   identityDocumentId: string | null;
@@ -45,7 +47,7 @@ export interface TenantView {
   emergencyContactPhone: string | null;
   documentNumber: string;
   issuedAt: string | null;
-  verificationStatus: "pending" | "ocr_completed" | "verified" | "rejected";
+  verificationStatus: IdentityVerificationStatus;
   hasIdentityImages: boolean;
   frontImageUrl: string | null;
   backImageUrl: string | null;
@@ -402,6 +404,7 @@ export default function TenantsClient({ tenants }: { tenants: TenantView[] }) {
   );
 }
 
+// Form dùng chung cho cả tạo mới và chỉnh sửa, có lưu bản nháp trong trình duyệt.
 function TenantFormModal({
   tenant,
   pending,
