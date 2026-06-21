@@ -1,7 +1,12 @@
 import { after, NextResponse } from "next/server";
 import { extractMeterReadingsFromImage } from "@/lib/ai/gateway";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { sendZaloText } from "@/lib/zalo/client";
+import {
+  invoiceTransferContent,
+  resolveVietQrBankId,
+  vietQrImageUrl,
+} from "@/lib/vietqr";
+import { sendZaloPhoto, sendZaloText } from "@/lib/zalo/client";
 
 export const runtime = "nodejs";
 
@@ -98,11 +103,12 @@ function detectImageType(bytes: Buffer, responseContentType: string | null) {
 }
 
 function currentBillingMonth() {
-  const now = new Date();
-  return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(
-    2,
-    "0"
-  )}-01`;
+  const vietnamDate = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric",
+    month: "2-digit",
+  }).format(new Date());
+  return `${vietnamDate}-01`;
 }
 
 function normalized(value: string) {
@@ -153,8 +159,10 @@ function invoiceStatusLabel(status: string, dueDate: string) {
 const helpMessage = [
   "CÁC LỆNH CỦA BOT",
   "",
+  "LIENKET <3 số cuối SĐT> — Liên kết Zalo với phòng",
+  "Ví dụ: LIENKET 529",
   "CHECK — Xem hợp đồng và phòng đang thuê",
-  "HOADON — Xem hóa đơn gần nhất",
+  "HOADON — Xem hóa đơn gần nhất kèm mã QR",
   "DICHVU — Xem dịch vụ và đơn giá",
   "CHISO — Xem chỉ số điện/nước gần nhất",
   "GUIANH — Hướng dẫn gửi ảnh công tơ",
@@ -263,17 +271,25 @@ async function handleInvoiceCommand(userId: string) {
   const linked = await requireLink(userId);
   if (!linked) return;
 
-  const { data: invoice } = await linked.admin
-    .from("invoices")
-    .select(`
-      invoice_code, billing_month, due_date, status, total_amount, paid_at,
-      invoice_items(item_name, unit, unit_price, quantity, amount, billing_type)
-    `)
-    .eq("contract_id", linked.link.contract_id)
-    .neq("status", "cancelled")
-    .order("billing_month", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const [invoiceResult, ownerProfileResult] = await Promise.all([
+    linked.admin
+      .from("invoices")
+      .select(`
+        invoice_code, billing_month, due_date, status, total_amount, paid_at,
+        invoice_items(item_name, unit, unit_price, quantity, amount, billing_type)
+      `)
+      .eq("contract_id", linked.link.contract_id)
+      .neq("status", "cancelled")
+      .order("billing_month", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    linked.admin
+      .from("owner_profiles")
+      .select("bank_name, bank_account_number, bank_account_holder")
+      .eq("account_id", linked.link.account_id)
+      .maybeSingle(),
+  ]);
+  const invoice = invoiceResult.data;
 
   if (!invoice) {
     await sendZaloText(userId, "Hợp đồng này chưa có hóa đơn.");
@@ -287,22 +303,78 @@ async function handleInvoiceCommand(userId: string) {
         : "";
     return `• ${item.item_name}${usage}: ${formatMoney(Number(item.amount))}`;
   });
-  await sendZaloText(
-    userId,
-    [
-      `HÓA ĐƠN ${invoice.billing_month.slice(0, 7)}`,
-      `Mã: ${invoice.invoice_code}`,
-      "",
-      ...detail,
-      "",
-      `Tổng cộng: ${formatMoney(Number(invoice.total_amount))}`,
-      `Hạn thanh toán: ${formatDate(invoice.due_date)}`,
-      `Trạng thái: ${invoiceStatusLabel(invoice.status, invoice.due_date)}`,
-      ...(invoice.paid_at
-        ? [`Ngày thanh toán: ${formatDate(invoice.paid_at)}`]
-        : []),
-    ].join("\n")
-  );
+  const ownerProfile = ownerProfileResult.data;
+  const transferContent = invoiceTransferContent(invoice.invoice_code);
+  const message = [
+    `HÓA ĐƠN ${invoice.billing_month.slice(0, 7)}`,
+    `Mã: ${invoice.invoice_code}`,
+    "",
+    ...detail,
+    "",
+    `Tổng cộng: ${formatMoney(Number(invoice.total_amount))}`,
+    `Hạn thanh toán: ${formatDate(invoice.due_date)}`,
+    `Trạng thái: ${invoiceStatusLabel(invoice.status, invoice.due_date)}`,
+    ...(invoice.paid_at
+      ? [`Ngày thanh toán: ${formatDate(invoice.paid_at)}`]
+      : []),
+  ];
+
+  if (
+    !ownerProfile?.bank_name ||
+    !ownerProfile.bank_account_number ||
+    !ownerProfile.bank_account_holder
+  ) {
+    await sendZaloText(
+      userId,
+      [
+        ...message,
+        "",
+        "Chủ nhà chưa cấu hình đủ thông tin ngân hàng nên chưa thể tạo mã QR.",
+      ].join("\n")
+    );
+    return;
+  }
+
+  try {
+    const bankId = await resolveVietQrBankId(ownerProfile.bank_name);
+    const qrUrl = vietQrImageUrl({
+      bankId,
+      accountNumber: ownerProfile.bank_account_number,
+      accountName: ownerProfile.bank_account_holder,
+      amount: Number(invoice.total_amount),
+      description: transferContent,
+    });
+    await sendZaloPhoto(
+      userId,
+      qrUrl,
+      [
+        ...message,
+        "",
+        `Ngân hàng: ${ownerProfile.bank_name}`,
+        `Số tài khoản: ${ownerProfile.bank_account_number}`,
+        `Chủ tài khoản: ${ownerProfile.bank_account_holder}`,
+        `Nội dung CK: ${transferContent}`,
+        invoice.status === "paid"
+          ? "Hóa đơn này đã được ghi nhận thanh toán."
+          : "Sau khi chuyển khoản, vui lòng báo chủ nhà xác nhận.",
+      ].join("\n")
+    );
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        level: "error",
+        message: "zalo_invoice_qr_failed",
+        error: error instanceof Error ? error.message : String(error),
+        invoiceCode: invoice.invoice_code,
+      })
+    );
+    await sendZaloText(
+      userId,
+      [...message, "", "Chưa thể gửi mã QR lúc này. Vui lòng thử lại sau."].join(
+        "\n"
+      )
+    );
+  }
 }
 
 async function handleServicesCommand(userId: string) {
@@ -524,10 +596,29 @@ async function confirmLatest(userId: string, accepted: boolean) {
       );
       return;
     }
+    const valuesToInsert = values.map((value) => ({
+      ...value,
+      billing_month: submission.billing_month,
+    }));
     const { error: valueError } = await admin
       .from("meter_reading_values")
-      .insert(values);
+      .insert(valuesToInsert);
     if (valueError) {
+      if (valueError.code === "23505") {
+        await admin
+          .from("meter_reading_submissions")
+          .update({
+            status: "rejected",
+            error_message: "Chỉ số dịch vụ này đã được xác nhận trong tháng.",
+          })
+          .eq("id", submission.id)
+          .eq("status", "awaiting_confirmation");
+        await sendZaloText(
+          userId,
+          `Chỉ số này đã được xác nhận cho kỳ ${submission.billing_month.slice(0, 7)}. Mỗi loại công tơ chỉ được xác nhận một lần trong tháng.`
+        );
+        return;
+      }
       await sendZaloText(
         userId,
         "Không thể lưu chỉ số đã xác nhận. Vui lòng thử lại."
@@ -801,6 +892,16 @@ async function processImage(
 
     const values: ProposedMeterValue[] = [];
     const ignoredNonMeteredServices = new Set<string>();
+    const alreadyConfirmedServices = new Set<string>();
+    const billingMonth = currentBillingMonth();
+    const { data: confirmedThisMonth } = await admin
+      .from("meter_reading_values")
+      .select("contract_service_id")
+      .eq("account_id", link.account_id)
+      .eq("billing_month", billingMonth);
+    const confirmedServiceIds = new Set(
+      (confirmedThisMonth ?? []).map((value) => value.contract_service_id)
+    );
     for (const reading of result.data.readings) {
       const readingSignal = normalized(
         `${reading.type} ${reading.unit} ${result.data.notes}`
@@ -827,6 +928,10 @@ async function processImage(
         : service.billing_type;
       if (effectiveBillingType !== "metered") {
         ignoredNonMeteredServices.add(service.service_name);
+        continue;
+      }
+      if (confirmedServiceIds.has(service.id)) {
+        alreadyConfirmedServices.add(service.service_name);
         continue;
       }
 
@@ -861,6 +966,11 @@ async function processImage(
       );
     }
     if (!values.length) {
+      if (alreadyConfirmedServices.size > 0) {
+        throw new Error(
+          `${[...alreadyConfirmedServices].join(", ")} đã được xác nhận cho kỳ ${billingMonth.slice(0, 7)}. Mỗi loại công tơ chỉ được xác nhận một lần trong tháng.`
+        );
+      }
       if (ignoredNonMeteredServices.size > 0) {
         throw new Error(
           `${[...ignoredNonMeteredServices].join(", ")} đang được tính theo người/tháng hoặc phí cố định nên không cần gửi ảnh công tơ.`

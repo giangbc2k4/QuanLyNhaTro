@@ -19,6 +19,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { useAutoDismiss } from "@/lib/use-auto-dismiss";
 import CccdUpload, { type CccdData } from "@/components/shared/CccdUpload";
 import { deleteLargeDraft } from "@/lib/browser-draft";
 import { createClient as createBrowserClient } from "@/lib/supabase/client";
@@ -195,6 +196,7 @@ export default function TenantsClient({ tenants }: { tenants: TenantView[] }) {
   const [viewing, setViewing] = useState<TenantView | null>(null);
   const [deleting, setDeleting] = useState<TenantView | null>(null);
   const [toast, setToast] = useState<TenantActionResult | null>(null);
+  useAutoDismiss(toast, setToast);
 
   const query = search.trim().toLocaleLowerCase("vi");
   const filtered = tenants.filter(

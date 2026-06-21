@@ -8,8 +8,7 @@ auth.users
 
 accounts
   ├── owner_profiles
-  └── account_preferences
-       └── identity_documents
+  └── identity_documents
 
 accounts
   └── buildings
@@ -38,11 +37,6 @@ Mỗi tài khoản chỉ được truy cập dữ liệu có cùng `account_id`.
 ### owner_profiles
 
 Hồ sơ cá nhân của chủ nhà/chủ tài khoản.
-
-### account_preferences
-
-Tùy chọn thông báo riêng của từng tài khoản. Thông tin ngân hàng thuộc
-`owner_profiles` vì đây là thông tin nhận thanh toán của chủ nhà.
 
 ### identity_documents
 

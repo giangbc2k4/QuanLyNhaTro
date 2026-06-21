@@ -19,6 +19,7 @@ import {
   XCircle,
   type LucideIcon,
 } from "lucide-react";
+import { useAutoDismiss } from "@/lib/use-auto-dismiss";
 import {
   createContractAction,
   terminateContractAction,
@@ -158,6 +159,7 @@ export default function ContractsClient({
   const [selected, setSelected] = useState<ContractView | null>(null);
   const [creating, setCreating] = useState(false);
   const [toast, setToast] = useState<ContractActionResult | null>(null);
+  useAutoDismiss(toast, setToast);
   const query = search.trim().toLocaleLowerCase("vi");
   const filtered = contracts.filter(
     (contract) =>

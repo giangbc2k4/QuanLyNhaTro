@@ -18,6 +18,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
+import { useAutoDismiss } from "@/lib/use-auto-dismiss";
 import {
   deleteServiceAction,
   saveServiceAction,
@@ -70,6 +71,7 @@ export default function ServicesClient({
   );
   const [deleting, setDeleting] = useState<ServiceView | null>(null);
   const [toast, setToast] = useState<ServiceActionResult | null>(null);
+  useAutoDismiss(toast, setToast);
 
   function runAction(
     action: () => Promise<ServiceActionResult>,

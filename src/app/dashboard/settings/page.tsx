@@ -2,6 +2,7 @@ import SettingsClient, {
   type SettingsInitialData,
 } from "@/components/settings/SettingsClient";
 import { createClient } from "@/lib/supabase/server";
+import { getVietQrBanks } from "@/lib/vietqr";
 
 export default async function SettingsPage() {
   const supabase = await createClient();
@@ -9,7 +10,7 @@ export default async function SettingsPage() {
   const user = authData.user;
   if (!user) return null;
 
-  const [accountResult, profileResult, identityResult, settingsResult] =
+  const [accountResult, profileResult, identityResult, banks] =
     await Promise.all([
       supabase
         .from("accounts")
@@ -27,21 +28,13 @@ export default async function SettingsPage() {
         .eq("account_id", user.id)
         .eq("owner_type", "owner")
         .maybeSingle(),
-      supabase
-        .from("account_preferences")
-        .select("zalo_reminder, email_report, contract_expiry, overdue_payment")
-        .eq("account_id", user.id)
-        .maybeSingle(),
+      getVietQrBanks(),
     ]);
 
-  const settingsMissing =
-    settingsResult.error?.code === "42P01" ||
-    settingsResult.error?.code === "PGRST205";
   const error =
     accountResult.error ??
     profileResult.error ??
-    identityResult.error ??
-    (settingsMissing ? null : settingsResult.error);
+    identityResult.error;
   if (error) {
     return (
       <div className="glass rounded-2xl border border-red-500/20 p-6">
@@ -53,7 +46,6 @@ export default async function SettingsPage() {
 
   const profile = profileResult.data;
   const identity = identityResult.data;
-  const settings = settingsResult.data;
   const initialData: SettingsInitialData = {
     ownerProfileId: profile?.id ?? null,
     identityDocumentId: identity?.id ?? null,
@@ -81,14 +73,7 @@ export default async function SettingsPage() {
     bankName: profile?.bank_name ?? "",
     bankAccountNumber: profile?.bank_account_number ?? "",
     bankAccountHolder: profile?.bank_account_holder ?? "",
-    notifications: {
-      zaloReminder: settings?.zalo_reminder ?? true,
-      emailReport: settings?.email_report ?? true,
-      contractExpiry: settings?.contract_expiry ?? true,
-      overduePayment: settings?.overdue_payment ?? true,
-    },
-    settingsTableReady: !settingsMissing,
   };
 
-  return <SettingsClient initialData={initialData} />;
+  return <SettingsClient initialData={initialData} banks={banks} />;
 }

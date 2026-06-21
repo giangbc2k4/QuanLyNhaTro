@@ -60,3 +60,38 @@ export async function sendZaloText(chatId: string, text: string) {
   );
   return body.result;
 }
+
+export async function sendZaloPhoto(
+  chatId: string,
+  photo: string,
+  caption?: string
+) {
+  const response = await fetch(botApiUrl("sendPhoto"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      chat_id: chatId,
+      photo,
+      ...(caption ? { caption: caption.slice(0, 2000) } : {}),
+    }),
+    signal: AbortSignal.timeout(15_000),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Zalo gửi ảnh thất bại: HTTP ${response.status}.`);
+  }
+
+  const body = (await response.json()) as ZaloBotResponse<{
+    message_id: string;
+    date: number;
+  }>;
+  if (!body.ok) {
+    throw new Error(
+      body.description ||
+        `Zalo gửi ảnh thất bại${body.error_code ? ` (${body.error_code})` : ""}.`
+    );
+  }
+  return body.result;
+}

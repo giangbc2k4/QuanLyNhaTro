@@ -16,8 +16,6 @@ import {
   Menu,
   X,
   ChevronLeft,
-  Bell,
-  Search,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
@@ -166,13 +164,6 @@ export default function DashboardShell({ children, user }: DashboardShellProps) 
             </div>
 
             <div className="flex items-center gap-2">
-              <button type="button" className="p-2 rounded-xl text-text-muted hover:text-white hover:bg-white/[0.04] transition-colors" id="btn-search" aria-label="Tìm kiếm">
-                <Search size={18} />
-              </button>
-              <button type="button" className="p-2 rounded-xl text-text-muted hover:text-white hover:bg-white/[0.04] transition-colors relative" id="btn-notifications" aria-label="Thông báo">
-                <Bell size={18} />
-                <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-red-500" />
-              </button>
               <div className="lg:hidden w-8 h-8 rounded-lg bg-gradient-to-br from-accent to-purple flex items-center justify-center text-white text-xs font-bold">
                 {user.name.charAt(0).toUpperCase()}
               </div>

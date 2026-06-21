@@ -4,11 +4,8 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertCircle,
-  Bell,
   CheckCircle2,
   CreditCard,
-  Eye,
-  EyeOff,
   Loader2,
   Save,
   User,
@@ -17,12 +14,13 @@ import CccdUpload, { type CccdData } from "@/components/shared/CccdUpload";
 import { createClient as createBrowserClient } from "@/lib/supabase/client";
 import {
   saveBankSettingsAction,
-  saveNotificationSettingsAction,
   saveOwnerProfileAction,
   type SettingsActionResult,
 } from "@/app/dashboard/settings/actions";
+import type { VietQrBank } from "@/lib/vietqr";
+import { useAutoDismiss } from "@/lib/use-auto-dismiss";
 
-type Tab = "profile" | "bank" | "notifications";
+type Tab = "profile" | "bank";
 
 export interface SettingsInitialData {
   ownerProfileId: string | null;
@@ -41,13 +39,6 @@ export interface SettingsInitialData {
   bankName: string;
   bankAccountNumber: string;
   bankAccountHolder: string;
-  notifications: {
-    zaloReminder: boolean;
-    emailReport: boolean;
-    contractExpiry: boolean;
-    overduePayment: boolean;
-  };
-  settingsTableReady: boolean;
 }
 
 function toDateInput(date: string) {
@@ -63,14 +54,16 @@ function extension(file: File) {
 
 export default function SettingsClient({
   initialData,
+  banks,
 }: {
   initialData: SettingsInitialData;
+  banks: VietQrBank[];
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [activeTab, setActiveTab] = useState<Tab>("profile");
-  const [showBankAccount, setShowBankAccount] = useState(false);
   const [result, setResult] = useState<SettingsActionResult | null>(null);
+  useAutoDismiss(result, setResult);
   const [images, setImages] = useState<{
     front: File | null;
     back: File | null;
@@ -92,9 +85,6 @@ export default function SettingsClient({
     accountNumber: initialData.bankAccountNumber,
     accountHolder: initialData.bankAccountHolder,
   });
-  const [notifications, setNotifications] = useState(
-    initialData.notifications
-  );
 
   function run(action: () => Promise<SettingsActionResult>) {
     setResult(null);
@@ -180,15 +170,12 @@ export default function SettingsClient({
       void saveProfile();
     } else if (activeTab === "bank") {
       run(() => saveBankSettingsAction(bank));
-    } else {
-      run(() => saveNotificationSettingsAction(notifications));
     }
   }
 
   const tabs = [
     { key: "profile" as const, label: "Hồ sơ", icon: User },
     { key: "bank" as const, label: "Ngân hàng", icon: CreditCard },
-    { key: "notifications" as const, label: "Thông báo", icon: Bell },
   ];
 
   return (
@@ -258,36 +245,32 @@ export default function SettingsClient({
                 Dùng để tạo QR thanh toán trên hóa đơn sau này.
               </p>
             </div>
-            {!initialData.settingsTableReady && <MigrationNotice />}
-            <Field label="Ngân hàng"><input value={bank.bankName} onChange={(e) => setBank({ ...bank, bankName: e.target.value })} className="form-input" placeholder="VD: Vietcombank" /></Field>
+            <Field label="Ngân hàng">
+              <select
+                value={bank.bankName}
+                onChange={(e) => setBank({ ...bank, bankName: e.target.value })}
+                className="form-input"
+              >
+                <option value="">Chọn ngân hàng</option>
+                {bank.bankName && !banks.some((item) => item.shortName === bank.bankName) && (
+                  <option value={bank.bankName}>{bank.bankName}</option>
+                )}
+                {banks.map((item) => (
+                  <option key={item.bin} value={item.shortName}>
+                    {item.shortName} — {item.name}
+                  </option>
+                ))}
+              </select>
+              {!banks.length && (
+                <span className="mt-1 block text-[9px] text-warning">
+                  Chưa tải được danh sách ngân hàng. Bạn vẫn có thể giữ lựa chọn đã lưu.
+                </span>
+              )}
+            </Field>
             <Field label="Số tài khoản">
-              <div className="relative">
-                <input type={showBankAccount ? "text" : "password"} value={bank.accountNumber} onChange={(e) => setBank({ ...bank, accountNumber: e.target.value.replace(/\s/g, "") })} className="form-input pr-12 font-mono" />
-                <button type="button" onClick={() => setShowBankAccount((current) => !current)} className="absolute right-4 top-1/2 -translate-y-1/2 text-text-muted hover:text-white" aria-label={showBankAccount ? "Ẩn số tài khoản" : "Hiện số tài khoản"}>{showBankAccount ? <EyeOff size={16} /> : <Eye size={16} />}</button>
-              </div>
+              <input type="text" inputMode="numeric" autoComplete="off" value={bank.accountNumber} onChange={(e) => setBank({ ...bank, accountNumber: e.target.value.replace(/\s/g, "") })} className="form-input font-mono" />
             </Field>
             <Field label="Chủ tài khoản"><input value={bank.accountHolder} onChange={(e) => setBank({ ...bank, accountHolder: e.target.value.toUpperCase() })} className="form-input" /></Field>
-          </div>
-        )}
-
-        {activeTab === "notifications" && (
-          <div className="space-y-5 p-6">
-            <h3 className="font-semibold text-white">Cài đặt thông báo</h3>
-            {!initialData.settingsTableReady && <MigrationNotice />}
-            {[
-              ["zaloReminder", "Nhắc nhở Zalo Bot", "Nhắc người thuê gửi chỉ số hàng tháng"],
-              ["emailReport", "Báo cáo email", "Nhận báo cáo hoạt động qua email"],
-              ["contractExpiry", "Hợp đồng sắp hết hạn", "Thông báo trước khi hợp đồng hết hạn"],
-              ["overduePayment", "Nợ quá hạn", "Thông báo khi hóa đơn quá hạn"],
-            ].map(([key, label, description]) => {
-              const settingKey = key as keyof typeof notifications;
-              return (
-                <div key={key} className="flex items-center justify-between border-b border-border py-3 last:border-0">
-                  <div><p className="text-sm font-medium text-white">{label}</p><p className="mt-1 text-[10px] text-text-muted">{description}</p></div>
-                  <button type="button" role="switch" aria-checked={notifications[settingKey]} onClick={() => setNotifications({ ...notifications, [settingKey]: !notifications[settingKey] })} className={`relative h-6 w-11 rounded-full ${notifications[settingKey] ? "bg-accent" : "bg-white/10"}`}><span className={`absolute top-[3px] h-[18px] w-[18px] rounded-full bg-white transition-all ${notifications[settingKey] ? "left-[22px]" : "left-[3px]"}`} /></button>
-                </div>
-              );
-            })}
           </div>
         )}
 
@@ -304,8 +287,4 @@ export default function SettingsClient({
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return <label className="block text-xs font-medium text-text-secondary"><span className="mb-2 block">{label}</span>{children}</label>;
-}
-
-function MigrationNotice() {
-  return <p className="rounded-xl border border-warning/20 bg-warning/[0.06] p-3 text-xs text-warning">Cần chạy `database/migrations/0010_account_settings.sql` trong Supabase SQL Editor trước khi lưu mục này.</p>;
 }

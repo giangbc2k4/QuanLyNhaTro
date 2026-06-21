@@ -2,6 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { invoiceTransferContent } from "@/lib/vietqr";
+import { sendZaloPhoto } from "@/lib/zalo/client";
 
 const INVOICES_PATH = "/dashboard/invoices";
 
@@ -20,10 +22,72 @@ export interface CreateInvoiceInput {
   readings: Record<string, number>;
 }
 
+export interface CreateBulkInvoicesInput {
+  contractIds: string[];
+  billingMonth: string;
+  dueDate: string;
+  readingsByContract: Record<string, Record<string, number>>;
+}
+
 function isUuid(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
     value
   );
+}
+
+function normalizeBankName(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .replace(/[đĐ]/g, "d")
+    .replace(/[^a-zA-Z0-9]/g, "")
+    .toLowerCase();
+}
+
+async function resolveVietQrBankId(bankName: string) {
+  const response = await fetch("https://api.vietqr.io/v2/banks", {
+    signal: AbortSignal.timeout(10_000),
+    next: { revalidate: 86_400 },
+  });
+  if (!response.ok) return bankName.trim();
+  const body = (await response.json()) as {
+    data?: Array<{
+      bin?: string;
+      code?: string;
+      shortName?: string;
+      short_name?: string;
+      name?: string;
+    }>;
+  };
+  const expected = normalizeBankName(bankName);
+  const bank = (body.data ?? []).find((item) =>
+    [item.bin, item.code, item.shortName, item.short_name, item.name]
+      .filter(Boolean)
+      .some((value) => normalizeBankName(String(value)) === expected)
+  ) ?? (body.data ?? []).find((item) =>
+    [item.code, item.shortName, item.short_name, item.name]
+      .filter(Boolean)
+      .some((value) => {
+        const normalized = normalizeBankName(String(value));
+        return normalized.includes(expected) || expected.includes(normalized);
+      })
+  );
+  return bank?.bin || bank?.code || bankName.trim();
+}
+
+function vietQrImageUrl(input: {
+  bankId: string;
+  accountNumber: string;
+  accountName: string;
+  amount: number;
+  description: string;
+}) {
+  const params = new URLSearchParams({
+    amount: String(input.amount),
+    addInfo: input.description,
+    accountName: input.accountName,
+  });
+  return `https://img.vietqr.io/image/${encodeURIComponent(input.bankId)}-${encodeURIComponent(input.accountNumber)}-compact2.png?${params.toString()}`;
 }
 
 export async function createInvoiceAction(
@@ -308,4 +372,174 @@ export async function cancelInvoiceAction(
   }
   revalidatePath(INVOICES_PATH);
   return { success: true, message: "Đã hủy hóa đơn." };
+}
+
+export async function deletePaidInvoiceAction(
+  invoiceId: string
+): Promise<InvoiceActionResult> {
+  const supabase = await createClient();
+  const { data: authData } = await supabase.auth.getUser();
+  const user = authData.user;
+  if (!user || !isUuid(invoiceId)) {
+    return { success: false, message: "Yêu cầu không hợp lệ." };
+  }
+
+  const { data, error } = await supabase
+    .from("invoices")
+    .delete()
+    .eq("id", invoiceId)
+    .eq("account_id", user.id)
+    .eq("status", "paid")
+    .select("id")
+    .maybeSingle();
+
+  if (error || !data) {
+    return {
+      success: false,
+      message: "Chỉ có thể xóa hóa đơn đã thanh toán trong chế độ thử nghiệm.",
+    };
+  }
+  revalidatePath(INVOICES_PATH);
+  return { success: true, message: "Đã xóa hóa đơn đã thanh toán." };
+}
+
+export async function createBulkInvoicesAction(
+  input: CreateBulkInvoicesInput
+): Promise<InvoiceActionResult> {
+  const contractIds = [...new Set(input.contractIds)].filter(isUuid);
+  if (
+    contractIds.length === 0 ||
+    !/^\d{4}-\d{2}$/.test(input.billingMonth) ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(input.dueDate)
+  ) {
+    return { success: false, message: "Vui lòng kiểm tra thông tin tạo hàng loạt." };
+  }
+
+  let created = 0;
+  const skipped: string[] = [];
+  for (const contractId of contractIds) {
+    const result = await createInvoiceAction({
+      contractId,
+      billingMonth: input.billingMonth,
+      dueDate: input.dueDate,
+      note: "",
+      additionalName: "",
+      additionalAmount: 0,
+      readings: input.readingsByContract[contractId] ?? {},
+    });
+    if (result.success) created += 1;
+    else skipped.push(result.message);
+  }
+
+  revalidatePath(INVOICES_PATH);
+  return {
+    success: created > 0,
+    message:
+      skipped.length > 0
+        ? `Đã tạo ${created} hóa đơn, bỏ qua ${skipped.length} phòng thiếu dữ liệu hoặc đã có hóa đơn.`
+        : `Đã tạo thành công ${created} hóa đơn.`,
+  };
+}
+
+export async function sendInvoiceZaloAction(
+  invoiceId: string
+): Promise<InvoiceActionResult> {
+  const supabase = await createClient();
+  const { data: authData } = await supabase.auth.getUser();
+  const user = authData.user;
+  if (!user || !isUuid(invoiceId)) {
+    return { success: false, message: "Yêu cầu không hợp lệ." };
+  }
+
+  const { data: invoice, error } = await supabase
+    .from("invoices")
+    .select(`
+      invoice_code, contract_id, billing_month, due_date, status, total_amount,
+      rooms!invoices_room_id_fkey(room_number),
+      invoice_items(item_name, amount)
+    `)
+    .eq("id", invoiceId)
+    .eq("account_id", user.id)
+    .maybeSingle();
+  if (error || !invoice) {
+    return { success: false, message: "Không tìm thấy hóa đơn." };
+  }
+
+  const { data: link } = await supabase
+    .from("zalo_room_links")
+    .select("zalo_user_id")
+    .eq("contract_id", invoice.contract_id)
+    .eq("account_id", user.id)
+    .maybeSingle();
+  if (!link) {
+    return {
+      success: false,
+      message: "Phòng này chưa liên kết với Zalo Bot.",
+    };
+  }
+
+  const { data: ownerProfile } = await supabase
+    .from("owner_profiles")
+    .select("bank_name, bank_account_number, bank_account_holder")
+    .eq("account_id", user.id)
+    .maybeSingle();
+  if (
+    !ownerProfile?.bank_name ||
+    !ownerProfile.bank_account_number ||
+    !ownerProfile.bank_account_holder
+  ) {
+    return {
+      success: false,
+      message:
+        "Chưa có đủ thông tin ngân hàng. Hãy cập nhật trong Cài đặt → Ngân hàng.",
+    };
+  }
+
+  const room = Array.isArray(invoice.rooms) ? invoice.rooms[0] : invoice.rooms;
+  const details = (invoice.invoice_items ?? [])
+    .map(
+      (item) =>
+        `• ${item.item_name}: ${Number(item.amount).toLocaleString("vi-VN")}đ`
+    )
+    .join("\n");
+  try {
+    const bankId = await resolveVietQrBankId(ownerProfile.bank_name);
+    const transferContent = invoiceTransferContent(invoice.invoice_code);
+    const qrUrl = vietQrImageUrl({
+      bankId,
+      accountNumber: ownerProfile.bank_account_number,
+      accountName: ownerProfile.bank_account_holder,
+      amount: Number(invoice.total_amount),
+      description: transferContent,
+    });
+    await sendZaloPhoto(
+      link.zalo_user_id,
+      qrUrl,
+      [
+        `HÓA ĐƠN PHÒNG ${room?.room_number ?? ""}`,
+        `Mã: ${invoice.invoice_code}`,
+        `Kỳ: ${invoice.billing_month.slice(0, 7)}`,
+        `Hạn thanh toán: ${invoice.due_date.split("-").reverse().join("/")}`,
+        "",
+        details,
+        "",
+        `TỔNG CỘNG: ${Number(invoice.total_amount).toLocaleString("vi-VN")}đ`,
+        `Nội dung CK: ${transferContent}`,
+        "",
+        invoice.status === "paid"
+          ? "Trạng thái: Đã thanh toán"
+          : "Quét QR để thanh toán. Sau khi tiền về, chủ nhà sẽ xác nhận trên hệ thống.",
+      ].join("\n")
+    );
+  } catch (sendError) {
+    return {
+      success: false,
+      message:
+        sendError instanceof Error
+          ? sendError.message
+          : "Không thể gửi thông báo Zalo.",
+    };
+  }
+
+  return { success: true, message: "Đã gửi thông báo hóa đơn qua Zalo." };
 }

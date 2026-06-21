@@ -1,8 +1,10 @@
 import InvoicesClient, {
   type InvoiceContractOption,
+  type InvoicePaymentAccount,
   type InvoiceView,
 } from "@/components/invoices/InvoicesClient";
 import { createClient } from "@/lib/supabase/server";
+import { resolveVietQrBankId } from "@/lib/vietqr";
 
 export default async function InvoicesPage() {
   const supabase = await createClient();
@@ -10,12 +12,17 @@ export default async function InvoicesPage() {
   const userId = authData.user?.id;
   if (!userId) return null;
 
-  const [invoicesResult, contractsResult, readingsResult, confirmedResult] =
-    await Promise.all([
+  const [
+    invoicesResult,
+    contractsResult,
+    readingsResult,
+    confirmedResult,
+    ownerProfileResult,
+  ] = await Promise.all([
     supabase
       .from("invoices")
       .select(`
-        id, invoice_code, billing_month, due_date, status, total_amount,
+        id, contract_id, invoice_code, billing_month, due_date, status, total_amount,
         note, issued_at, paid_at,
         rooms!invoices_room_id_fkey(room_number, buildings!rooms_building_id_fkey(name)),
         tenants!invoices_tenant_id_fkey(full_name, phone),
@@ -57,13 +64,19 @@ export default async function InvoicesPage() {
       .eq("account_id", userId)
       .eq("meter_reading_submissions.status", "confirmed")
       .order("created_at", { ascending: false }),
+    supabase
+      .from("owner_profiles")
+      .select("bank_name, bank_account_number, bank_account_holder")
+      .eq("account_id", userId)
+      .maybeSingle(),
     ]);
 
   const error =
     invoicesResult.error ??
     contractsResult.error ??
     readingsResult.error ??
-    confirmedResult.error;
+    confirmedResult.error ??
+    ownerProfileResult.error;
   if (error) {
     return (
       <div className="glass rounded-2xl border border-red-500/20 p-6">
@@ -147,6 +160,14 @@ export default async function InvoicesPage() {
     };
   });
 
+  const billedMonthsByContract = new Map<string, string[]>();
+  for (const invoice of invoicesResult.data ?? []) {
+    if (invoice.status === "cancelled") continue;
+    const months = billedMonthsByContract.get(invoice.contract_id) ?? [];
+    months.push(invoice.billing_month.slice(0, 7));
+    billedMonthsByContract.set(invoice.contract_id, months);
+  }
+
   const contracts: InvoiceContractOption[] = (contractsResult.data ?? []).map(
     (contract) => {
       const room = Array.isArray(contract.rooms)
@@ -168,6 +189,7 @@ export default async function InvoicesPage() {
         tenantName: tenant?.full_name ?? "—",
         monthlyRent: Number(contract.monthly_rent),
         residentCount: 1 + (contract.contract_members?.length ?? 0),
+        billedMonths: billedMonthsByContract.get(contract.id) ?? [],
         services: (contract.contract_services ?? []).map((service) => ({
           id: service.id,
           name: service.service_name,
@@ -187,5 +209,26 @@ export default async function InvoicesPage() {
     }
   );
 
-  return <InvoicesClient invoices={invoices} contracts={contracts} />;
+  const ownerProfile = ownerProfileResult.data;
+  let paymentAccount: InvoicePaymentAccount | null = null;
+  if (
+    ownerProfile?.bank_name &&
+    ownerProfile.bank_account_number &&
+    ownerProfile.bank_account_holder
+  ) {
+    paymentAccount = {
+      bankId: await resolveVietQrBankId(ownerProfile.bank_name),
+      bankName: ownerProfile.bank_name,
+      accountNumber: ownerProfile.bank_account_number,
+      accountName: ownerProfile.bank_account_holder,
+    };
+  }
+
+  return (
+    <InvoicesClient
+      invoices={invoices}
+      contracts={contracts}
+      paymentAccount={paymentAccount}
+    />
+  );
 }

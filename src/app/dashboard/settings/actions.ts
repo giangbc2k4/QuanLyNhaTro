@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { getVietQrBanks } from "@/lib/vietqr";
 
 const SETTINGS_PATH = "/dashboard/settings";
 
@@ -29,13 +30,6 @@ export interface BankSettingsInput {
   bankName: string;
   accountNumber: string;
   accountHolder: string;
-}
-
-export interface NotificationSettingsInput {
-  zaloReminder: boolean;
-  emailReport: boolean;
-  contractExpiry: boolean;
-  overduePayment: boolean;
 }
 
 function isUuid(value: string) {
@@ -164,6 +158,17 @@ export async function saveBankSettingsAction(
     return { success: false, message: "Vui lòng kiểm tra thông tin ngân hàng." };
   }
 
+  const availableBanks = await getVietQrBanks();
+  const selectedBank = availableBanks.find(
+    (bank) => bank.shortName === bankName
+  );
+  if (availableBanks.length && !selectedBank) {
+    return {
+      success: false,
+      message: "Vui lòng chọn ngân hàng trong danh sách.",
+    };
+  }
+
   const { data: profile } = await supabase
     .from("owner_profiles")
     .select("id")
@@ -179,7 +184,7 @@ export async function saveBankSettingsAction(
   const { error } = await supabase
     .from("owner_profiles")
     .update({
-      bank_name: bankName,
+      bank_name: selectedBank?.shortName ?? bankName,
       bank_account_number: accountNumber,
       bank_account_holder: accountHolder,
     })
@@ -193,31 +198,6 @@ export async function saveBankSettingsAction(
     };
   }
   revalidatePath(SETTINGS_PATH);
+  revalidatePath("/dashboard/invoices");
   return { success: true, message: "Đã lưu tài khoản ngân hàng." };
-}
-
-export async function saveNotificationSettingsAction(
-  input: NotificationSettingsInput
-): Promise<SettingsActionResult> {
-  const { supabase, user } = await authenticatedClient();
-  if (!user) return { success: false, message: "Phiên đăng nhập đã hết hạn." };
-  const { error } = await supabase.from("account_preferences").upsert(
-    {
-      account_id: user.id,
-      zalo_reminder: Boolean(input.zaloReminder),
-      email_report: Boolean(input.emailReport),
-      contract_expiry: Boolean(input.contractExpiry),
-      overdue_payment: Boolean(input.overduePayment),
-    },
-    { onConflict: "account_id" }
-  );
-  if (error) {
-    return {
-      success: false,
-      message:
-        "Không thể lưu. Hãy chạy migration 0010_account_settings.sql.",
-    };
-  }
-  revalidatePath(SETTINGS_PATH);
-  return { success: true, message: "Đã lưu cài đặt thông báo." };
 }

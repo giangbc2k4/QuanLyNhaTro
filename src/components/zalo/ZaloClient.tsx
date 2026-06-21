@@ -20,6 +20,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
+import { useAutoDismiss } from "@/lib/use-auto-dismiss";
 import {
   unlinkZaloAction,
   type ZaloActionResult,
@@ -104,6 +105,7 @@ export default function ZaloClient({
   const [pending, startTransition] = useTransition();
   const [search, setSearch] = useState("");
   const [toast, setToast] = useState<ZaloActionResult | null>(null);
+  useAutoDismiss(toast, setToast);
   const [confirming, setConfirming] = useState<ZaloLinkView | null>(null);
   const [viewing, setViewing] = useState<ZaloLinkView | null>(null);
   const [fullImage, setFullImage] = useState<string | null>(null);
@@ -415,24 +417,141 @@ function MeterHistory({
   submissions: ZaloSubmissionView[];
   onImageClick: (url: string) => void;
 }) {
-  const visibleSubmissions = getVisibleSubmissions(submissions);
+  const dataMonths = [
+    ...new Set(
+      submissions.map((submission) => submission.billingMonth.slice(0, 7))
+    ),
+  ].sort((a, b) => b.localeCompare(a));
+  const now = new Date();
+  const currentYear = String(now.getFullYear());
+  const currentMonthNumber = String(now.getMonth() + 1).padStart(2, "0");
+  const years = [
+    ...new Set([
+      currentYear,
+      ...dataMonths.map((month) => month.slice(0, 4)),
+    ]),
+  ].sort((a, b) => b.localeCompare(a));
+  const [selectedYear, setSelectedYear] = useState(currentYear);
+  const [selectedMonth, setSelectedMonth] = useState(
+    `${currentYear}-${currentMonthNumber}`
+  );
+  const [statusFilter, setStatusFilter] = useState<
+    "all" | "confirmed" | "pending"
+  >("all");
+  const months = Array.from(
+    { length: 12 },
+    (_, index) =>
+      `${selectedYear}-${String(index + 1).padStart(2, "0")}`
+  );
+  const displayedMonths = months.filter((month) => month === selectedMonth);
 
   return (
-    <div className="grid gap-5 lg:grid-cols-2">
-      <MeterColumn
-        kind="electric"
-        title="Điện"
-        icon={Zap}
-        submissions={visibleSubmissions}
-        onImageClick={onImageClick}
-      />
-      <MeterColumn
-        kind="water"
-        title="Nước"
-        icon={Droplets}
-        submissions={visibleSubmissions}
-        onImageClick={onImageClick}
-      />
+    <div className="space-y-6">
+      <div className="flex flex-col gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] p-3 sm:flex-row sm:items-end">
+        <label className="flex-1 text-[10px] font-medium text-text-muted">
+          Năm
+          <select
+            value={selectedYear}
+            onChange={(event) => {
+              const year = event.target.value;
+              setSelectedYear(year);
+              setSelectedMonth(`${year}-${selectedMonth.slice(5)}`);
+            }}
+            className="form-input mt-1.5"
+          >
+            {years.map((year) => (
+              <option key={year} value={year}>
+                Năm {year}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex-1 text-[10px] font-medium text-text-muted">
+          Tháng ghi số
+          <select
+            value={selectedMonth}
+            onChange={(event) => setSelectedMonth(event.target.value)}
+            className="form-input mt-1.5"
+          >
+            {months.map((month) => (
+              <option key={month} value={month}>
+                Tháng {month.slice(5)}/{month.slice(0, 4)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex-1 text-[10px] font-medium text-text-muted">
+          Trạng thái
+          <select
+            value={statusFilter}
+            onChange={(event) =>
+              setStatusFilter(
+                event.target.value as "all" | "confirmed" | "pending"
+              )
+            }
+            className="form-input mt-1.5"
+          >
+            <option value="all">Tất cả trạng thái</option>
+            <option value="confirmed">Đã xác nhận</option>
+            <option value="pending">Đang chờ xác nhận</option>
+          </select>
+        </label>
+      </div>
+
+      {displayedMonths.map((month) => {
+        const monthlySubmissions = getVisibleSubmissions(
+          submissions.filter(
+            (submission) => submission.billingMonth.slice(0, 7) === month
+          )
+        ).filter((submission) =>
+          statusFilter === "all"
+            ? true
+            : statusFilter === "confirmed"
+              ? submission.status === "confirmed"
+              : ["processing", "awaiting_confirmation"].includes(
+                  submission.status
+                )
+        );
+
+        return (
+          <section key={month} className="space-y-3">
+            <div className="flex items-center gap-3">
+              <h4 className="shrink-0 text-xs font-semibold uppercase tracking-wider text-text-secondary">
+                Tháng {month.slice(5)}/{month.slice(0, 4)}
+              </h4>
+              <div className="h-px flex-1 bg-border" />
+              <span className="text-[10px] text-text-muted">
+                {monthlySubmissions.length} ảnh
+              </span>
+            </div>
+            <div className="grid gap-5 lg:grid-cols-2">
+              <MeterColumn
+                kind="electric"
+                title="Điện"
+                icon={Zap}
+                submissions={monthlySubmissions}
+                onImageClick={onImageClick}
+              />
+              <MeterColumn
+                kind="water"
+                title="Nước"
+                icon={Droplets}
+                submissions={monthlySubmissions}
+                onImageClick={onImageClick}
+              />
+            </div>
+          </section>
+        );
+      })}
+
+      {!displayedMonths.length && (
+        <div className="py-14 text-center">
+          <ImageIcon size={28} className="mx-auto text-text-muted" />
+          <p className="mt-3 text-xs text-text-muted">
+            Chưa có lịch sử ảnh công tơ.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
@@ -507,7 +626,9 @@ function SubmissionCard({
   const displayValues =
     submission.confirmedValues.length > 0
       ? submission.confirmedValues
-          .filter((value) => serviceKind(value.serviceName) === kind)
+          .filter(
+            (value) => serviceKind(value.serviceName, value.unit) === kind
+          )
           .map((value) => ({
             label: value.serviceName,
             value: value.value,
@@ -619,7 +740,7 @@ function getVisibleSubmissions(submissions: ZaloSubmissionView[]) {
 function submissionKinds(submission: ZaloSubmissionView): MeterKind[] {
   const kinds = new Set<MeterKind>();
   for (const value of submission.confirmedValues) {
-    const kind = serviceKind(value.serviceName);
+    const kind = serviceKind(value.serviceName, value.unit);
     if (kind) kinds.add(kind);
   }
   if (submission.confirmedValues.length > 0) return [...kinds];
@@ -631,14 +752,22 @@ function submissionKinds(submission: ZaloSubmissionView): MeterKind[] {
   return [...kinds];
 }
 
-function serviceKind(value: string): MeterKind | null {
-  const normalized = value
+function serviceKind(value: string, unit = ""): MeterKind | null {
+  const normalized = `${value} ${unit}`
     .normalize("NFD")
     .replace(/\p{Diacritic}/gu, "")
-    .replaceAll("đ", "d")
+    .replace(/[đĐ]/g, "d")
     .toLocaleLowerCase("vi");
-  if (normalized.includes("dien")) return "electric";
-  if (normalized.includes("nuoc")) return "water";
+  if (normalized.includes("dien") || normalized.includes("kwh")) {
+    return "electric";
+  }
+  if (
+    normalized.includes("nuoc") ||
+    normalized.includes("m3") ||
+    normalized.includes("m³")
+  ) {
+    return "water";
+  }
   return null;
 }
 

@@ -16,6 +16,7 @@ import {
   UserRound,
   X,
 } from "lucide-react";
+import { useAutoDismiss } from "@/lib/use-auto-dismiss";
 import {
   deleteBuildingAction,
   deleteRoomAction,
@@ -105,6 +106,7 @@ export default function BuildingsClient({
   const [editor, setEditor] = useState<Editor>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>(null);
   const [toast, setToast] = useState<ToastState | null>(null);
+  useAutoDismiss(toast, setToast);
 
   const selectedBuilding =
     buildings.find((building) => building.id === selectedBuildingId) ??
