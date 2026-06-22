@@ -58,6 +58,12 @@ function getAuthErrorMessage(message: string) {
   return message;
 }
 
+function isExistingSignUpUser(
+  user: { identities?: unknown[] | null } | null
+) {
+  return Boolean(user && Array.isArray(user.identities) && user.identities.length === 0);
+}
+
 export default function LoginPage() {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [showPassword, setShowPassword] = useState(false);
@@ -124,6 +130,7 @@ export default function LoginPage() {
         email: email.trim(),
         password,
         options: {
+          emailRedirectTo: `${window.location.origin}/login`,
           data: {
             full_name: fullName.trim(),
             phone: normalizeVietnamPhone(phone),
@@ -133,6 +140,18 @@ export default function LoginPage() {
 
       if (signUpError) {
         setError(getAuthErrorMessage(signUpError.message));
+        return;
+      }
+
+      // Khi bật xác nhận email, Supabase có thể trả về một user ẩn danh với
+      // identities rỗng thay vì báo lỗi, nhằm tránh để lộ email đã đăng ký.
+      if (isExistingSignUpUser(data.user)) {
+        setError("Email này đã được đăng ký. Vui lòng chuyển sang đăng nhập.");
+        return;
+      }
+
+      if (!data.user) {
+        setError("Không thể tạo tài khoản. Vui lòng thử lại.");
         return;
       }
 

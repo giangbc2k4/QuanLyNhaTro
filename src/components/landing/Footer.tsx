@@ -47,15 +47,15 @@ export default function Footer() {
             <div className="space-y-3">
               <div className="flex items-center gap-3 text-sm text-text-muted">
                 <Mail size={14} className="text-text-muted flex-shrink-0" />
-                <span>support@nhatropro.vn</span>
+                <span>trantruonggiang2112004@gmail.com</span>
               </div>
               <div className="flex items-center gap-3 text-sm text-text-muted">
                 <Phone size={14} className="text-text-muted flex-shrink-0" />
-                <span>0909 123 456</span>
+                <span>0877747529</span>
               </div>
               <div className="flex items-center gap-3 text-sm text-text-muted">
                 <MapPin size={14} className="text-text-muted flex-shrink-0" />
-                <span>TP. Hồ Chí Minh, Việt Nam</span>
+                <span>Hà Nội, VN</span>
               </div>
             </div>
           </div>
