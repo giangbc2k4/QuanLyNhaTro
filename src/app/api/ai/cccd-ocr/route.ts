@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
-const MAX_IMAGE_SIZE = 1.4 * 1024 * 1024;
+const MAX_IMAGE_SIZE = 2 * 1024 * 1024;
 const ALLOWED_IMAGE_TYPES = new Set([
   "image/jpeg",
   "image/png",
@@ -19,7 +19,7 @@ function validateImage(file: File | null, label: string) {
   if (!ALLOWED_IMAGE_TYPES.has(file.type)) {
     return `Ảnh ${label} phải là JPEG, PNG hoặc WebP.`;
   }
-  if (file.size > MAX_IMAGE_SIZE) return `Ảnh ${label} vượt quá 1,4 MB.`;
+  if (file.size > MAX_IMAGE_SIZE) return `Ảnh ${label} vượt quá 2 MB.`;
   return null;
 }
 

@@ -156,8 +156,8 @@ export default function CccdUpload({
       return;
     }
 
-    if (file.size > 1.4 * 1024 * 1024) {
-      setScanError("Mỗi ảnh CCCD không được vượt quá 1,4 MB.");
+    if (file.size > 2 * 1024 * 1024) {
+      setScanError("Mỗi ảnh CCCD không được vượt quá 2 MB.");
       event.target.value = "";
       return;
     }
