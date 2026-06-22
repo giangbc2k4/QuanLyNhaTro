@@ -47,6 +47,7 @@ export interface ZaloLinkView {
   buildingAddress: string;
   latestSubmissionStatus: MeterSubmissionStatus | null;
   latestSubmissionAt: string | null;
+  meterKinds: MeterKind[];
   submissions: ZaloSubmissionView[];
 }
 
@@ -282,7 +283,7 @@ export default function ZaloClient({
                 className="mt-3 flex w-full items-center justify-end gap-1 rounded-lg py-1 text-[10px] font-medium text-[#67a0ff] hover:text-[#8bb7ff]"
               >
                 <Eye size={12} />
-                Xem ảnh điện và nước
+                {meterHistoryButtonLabel(link.meterKinds)}
               </button>
             </article>
           ))}
@@ -373,6 +374,7 @@ export default function ZaloClient({
             <div className="overflow-y-auto p-5">
               <MeterHistory
                 submissions={viewing.submissions}
+                meterKinds={viewing.meterKinds}
                 onImageClick={setFullImage}
               />
             </div>
@@ -412,9 +414,11 @@ type MeterKind = "electric" | "water";
 
 function MeterHistory({
   submissions,
+  meterKinds,
   onImageClick,
 }: {
   submissions: ZaloSubmissionView[];
+  meterKinds: MeterKind[];
   onImageClick: (url: string) => void;
 }) {
   const dataMonths = [
@@ -524,22 +528,30 @@ function MeterHistory({
                 {monthlySubmissions.length} ảnh
               </span>
             </div>
-            <div className="grid gap-5 lg:grid-cols-2">
-              <MeterColumn
-                kind="electric"
-                title="Điện"
-                icon={Zap}
-                submissions={monthlySubmissions}
-                onImageClick={onImageClick}
-              />
-              <MeterColumn
-                kind="water"
-                title="Nước"
-                icon={Droplets}
-                submissions={monthlySubmissions}
-                onImageClick={onImageClick}
-              />
+            <div
+              className={`grid gap-5 ${
+                meterKinds.length > 1 ? "lg:grid-cols-2" : "grid-cols-1"
+              }`}
+            >
+              {meterKinds.map((kind) => (
+                <MeterColumn
+                  key={kind}
+                  kind={kind}
+                  title={kind === "electric" ? "Điện" : "Nước"}
+                  icon={kind === "electric" ? Zap : Droplets}
+                  submissions={monthlySubmissions}
+                  onImageClick={onImageClick}
+                />
+              ))}
             </div>
+            {!meterKinds.length && (
+              <div className="rounded-xl border border-dashed border-white/[0.07] py-12 text-center">
+                <ImageIcon size={24} className="mx-auto text-text-muted" />
+                <p className="mt-2 text-xs text-text-muted">
+                  Hợp đồng này không có dịch vụ tính theo chỉ số công tơ.
+                </p>
+              </div>
+            )}
           </section>
         );
       })}
@@ -771,6 +783,14 @@ function serviceKind(value: string, unit = ""): MeterKind | null {
     return "water";
   }
   return null;
+}
+
+function meterHistoryButtonLabel(kinds: MeterKind[]) {
+  if (kinds.length === 1) {
+    return kinds[0] === "electric" ? "Xem ảnh điện" : "Xem ảnh nước";
+  }
+  if (kinds.length > 1) return "Xem ảnh điện và nước";
+  return "Xem lịch sử công tơ";
 }
 
 function formatDateTime(value: string) {

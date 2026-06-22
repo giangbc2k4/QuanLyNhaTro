@@ -17,6 +17,7 @@ import {
 import { sendZaloPhoto, sendZaloText } from "@/lib/zalo/client";
 import {
   currentBillingMonth,
+  currentVietnamDate,
   detectImageType,
   formatDate,
   formatMoney,
@@ -343,20 +344,35 @@ async function handleLinkCommand(userId: string, text: string) {
 
   const [, contractCode, phoneLastThree] = match;
   const admin = createAdminClient();
+  const today = currentVietnamDate();
   let contractQuery = admin
     .from("contracts")
     .select(`
-      id, account_id, room_id, contract_code, status,
+      id, account_id, room_id, contract_code, status, start_date, end_date,
       tenants!contracts_main_tenant_id_fkey(phone),
       rooms!contracts_room_id_fkey(room_number)
     `)
-    .in("status", ["active", "expiring"]);
+    .in("status", ["active", "expiring"])
+    .lte("start_date", today)
+    .gte("end_date", today);
 
   if (contractCode) {
     contractQuery = contractQuery.eq("contract_code", contractCode);
   }
 
-  const { data: contracts } = await contractQuery;
+  const { data: contracts, error: contractError } = await contractQuery;
+  if (contractError) {
+    logError("zalo_link_contract_lookup_failed", {
+      error: errorMessage(contractError),
+      hasContractCode: Boolean(contractCode),
+    });
+    await sendZaloText(
+      userId,
+      "Chưa thể kiểm tra hợp đồng lúc này. Vui lòng thử lại sau."
+    );
+    return true;
+  }
+
   const candidates = (contracts ?? []).filter((contract) => {
     const tenant = Array.isArray(contract.tenants)
       ? contract.tenants[0]
@@ -757,7 +773,7 @@ async function processImage(
     );
 
     const values: ProposedMeterValue[] = [];
-    const ignoredNonMeteredServices = new Set<string>();
+    const ignoredNonMeteredServices = new Map<string, string>();
     const alreadyConfirmedServices = new Set<string>();
     const billingMonth = currentBillingMonth();
     const { data: confirmedThisMonth } = await admin
@@ -793,7 +809,10 @@ async function processImage(
           service.billing_type
         : service.billing_type;
       if (effectiveBillingType !== "metered") {
-        ignoredNonMeteredServices.add(service.service_name);
+        ignoredNonMeteredServices.set(
+          service.service_name,
+          effectiveBillingType
+        );
         continue;
       }
       if (confirmedServiceIds.has(service.id)) {
@@ -838,9 +857,48 @@ async function processImage(
         );
       }
       if (ignoredNonMeteredServices.size > 0) {
-        throw new Error(
-          `${[...ignoredNonMeteredServices].join(", ")} đang được tính theo người/tháng hoặc phí cố định nên không cần gửi ảnh công tơ.`
+        const ignoredServices = [...ignoredNonMeteredServices.entries()];
+        const descriptions = ignoredServices.map(([name, billingType]) => {
+          const billingLabel =
+            billingType === "per_person"
+              ? "theo người/tháng"
+              : billingType === "fixed"
+                ? "theo tháng"
+                : billingType === "free"
+                  ? "miễn phí"
+                  : "không theo chỉ số";
+          return `${name} được tính ${billingLabel}`;
+        });
+
+        const { error: removeImageError } = await admin.storage
+          .from("meter-readings")
+          .remove([imagePath]);
+        if (removeImageError) {
+          logWarning("zalo_ignored_meter_image_cleanup_failed", {
+            submissionId: submission.id,
+            imagePath,
+            error: errorMessage(removeImageError),
+          });
+        }
+
+        const { error: deleteSubmissionError } = await admin
+          .from("meter_reading_submissions")
+          .delete()
+          .eq("id", submission.id);
+        if (deleteSubmissionError) {
+          logWarning("zalo_ignored_meter_submission_cleanup_failed", {
+            submissionId: submission.id,
+            error: errorMessage(deleteSubmissionError),
+          });
+        }
+
+        await sendZaloText(
+          userId,
+          `${descriptions.join(", ")} nên không cần gửi ảnh ${ignoredServices
+            .map(([name]) => name.toLowerCase())
+            .join(", ")}. Thông tin này sẽ không được lưu và sử dụng.`
         );
+        return;
       }
       throw new Error(
         `AI đọc được ${result.data.readings.length} chỉ số nhưng chưa xác định được đó là điện hay nước.`

@@ -34,6 +34,7 @@ export default async function ZaloPage() {
         contracts!zalo_room_links_contract_id_fkey(
           contract_code, start_date, end_date, status,
           tenants!contracts_main_tenant_id_fkey(full_name, phone),
+          contract_services(service_name, unit, billing_type),
           rooms!contracts_room_id_fkey(
             room_number,
             buildings!rooms_building_id_fkey(name, address)
@@ -187,6 +188,33 @@ export default async function ZaloPage() {
         : room.buildings
       : null;
     const latestSubmission = latestSubmissionByZalo.get(link.zalo_user_id);
+    const contractServices = contract?.contract_services ?? [];
+    const meterKinds = [
+      ...new Set(
+        contractServices.flatMap((service) => {
+          if (service.billing_type !== "metered") return [];
+          const normalizedService = `${service.service_name} ${service.unit}`
+            .normalize("NFD")
+            .replace(/\p{Diacritic}/gu, "")
+            .replace(/[đĐ]/g, "d")
+            .toLowerCase();
+          if (
+            normalizedService.includes("dien") ||
+            normalizedService.includes("kwh")
+          ) {
+            return ["electric" as const];
+          }
+          if (
+            normalizedService.includes("nuoc") ||
+            normalizedService.includes("m3") ||
+            normalizedService.includes("m³")
+          ) {
+            return ["water" as const];
+          }
+          return [];
+        })
+      ),
+    ];
 
     return {
       id: link.id,
@@ -203,6 +231,7 @@ export default async function ZaloPage() {
       buildingAddress: building?.address ?? "",
       latestSubmissionStatus: latestSubmission?.status ?? null,
       latestSubmissionAt: latestSubmission?.created_at ?? null,
+      meterKinds,
       submissions: submissionsByZalo.get(link.zalo_user_id) ?? [],
     };
   });

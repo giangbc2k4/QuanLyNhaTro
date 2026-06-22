@@ -111,14 +111,17 @@ export function detectImageType(
   return null;
 }
 
-export function currentBillingMonth() {
-  const vietnamDate = new Intl.DateTimeFormat("en-CA", {
+export function currentVietnamDate() {
+  return new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Ho_Chi_Minh",
     year: "numeric",
     month: "2-digit",
+    day: "2-digit",
   }).format(new Date());
+}
 
-  return `${vietnamDate}-01`;
+export function currentBillingMonth() {
+  return `${currentVietnamDate().slice(0, 7)}-01`;
 }
 
 export function normalized(value: string) {

@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { getAuthenticatedClient } from "@/lib/server/auth";
 import { isUuid } from "@/lib/server/action-utils";
 import type { ServerActionResult } from "@/lib/server/action-result";
+import { errorMessage, logWarning } from "@/lib/server/logger";
+import { sendZaloText } from "@/lib/zalo/client";
 
 const CONTRACTS_PATH = "/dashboard/contracts";
 
@@ -298,6 +300,25 @@ export async function terminateContractAction(
     return { success: false, message: "Mã hợp đồng không hợp lệ." };
   }
 
+  const { data: contract } = await supabase
+    .from("contracts")
+    .select(`
+      contract_code,
+      rooms!contracts_room_id_fkey(
+        room_number,
+        buildings!rooms_building_id_fkey(name)
+      ),
+      zalo_room_links(id, zalo_user_id)
+    `)
+    .eq("id", contractId)
+    .eq("account_id", user.id)
+    .in("status", ["draft", "active", "expiring"])
+    .maybeSingle();
+
+  if (!contract) {
+    return { success: false, message: "Không tìm thấy hợp đồng có thể kết thúc." };
+  }
+
   const { data, error } = await supabase
     .from("contracts")
     .update({ status: "terminated" })
@@ -311,7 +332,82 @@ export async function terminateContractAction(
     return { success: false, message: "Không thể kết thúc hợp đồng." };
   }
 
+  const zaloLinks = contract.zalo_room_links ?? [];
+  let notificationFailed = false;
+  let unlinkFailed = false;
+
+  for (const link of zaloLinks) {
+    const room = Array.isArray(contract.rooms)
+      ? contract.rooms[0]
+      : contract.rooms;
+    const building = room
+      ? Array.isArray(room.buildings)
+        ? room.buildings[0]
+        : room.buildings
+      : null;
+    const roomLabel = [
+      room?.room_number ? `phòng ${room.room_number}` : null,
+      building?.name ?? null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+
+    try {
+      await sendZaloText(
+        link.zalo_user_id,
+        [
+          "THÔNG BÁO HỢP ĐỒNG",
+          "",
+          `Hợp đồng ${contract.contract_code}${roomLabel ? ` của ${roomLabel}` : ""} đã được chủ nhà kết thúc.`,
+          "Liên kết Zalo với hợp đồng này sẽ được tự động hủy.",
+        ].join("\n")
+      );
+    } catch (sendError) {
+      notificationFailed = true;
+      logWarning("contract_termination_zalo_notification_failed", {
+        contractId,
+        linkId: link.id,
+        error: errorMessage(sendError),
+      });
+    }
+
+    const { error: unlinkError } = await supabase
+      .from("zalo_room_links")
+      .delete()
+      .eq("id", link.id)
+      .eq("account_id", user.id);
+    if (unlinkError) {
+      unlinkFailed = true;
+      logWarning("contract_termination_zalo_unlink_failed", {
+        contractId,
+        linkId: link.id,
+        error: unlinkError.message,
+      });
+    }
+  }
+
   revalidatePath(CONTRACTS_PATH);
   revalidatePath("/dashboard/buildings");
-  return { success: true, message: "Đã kết thúc hợp đồng." };
+  revalidatePath("/dashboard/zalo");
+
+  if (unlinkFailed) {
+    return {
+      success: true,
+      message:
+        "Đã kết thúc hợp đồng nhưng chưa thể tự gỡ liên kết Zalo. Vui lòng kiểm tra trang Zalo Bot.",
+    };
+  }
+  if (notificationFailed) {
+    return {
+      success: true,
+      message:
+        "Đã kết thúc hợp đồng và gỡ liên kết Zalo, nhưng bot không gửi được thông báo.",
+    };
+  }
+  return {
+    success: true,
+    message: zaloLinks.length
+      ? "Đã kết thúc hợp đồng, thông báo người thuê và gỡ liên kết Zalo."
+      : "Đã kết thúc hợp đồng.",
+  };
 }
