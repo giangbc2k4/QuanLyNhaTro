@@ -5,6 +5,7 @@ import { getAuthenticatedClient } from "@/lib/server/auth";
 import { isUuid } from "@/lib/server/action-utils";
 import type { ServerActionResult } from "@/lib/server/action-result";
 import { errorMessage, logWarning } from "@/lib/server/logger";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { sendZaloText } from "@/lib/zalo/client";
 
 const CONTRACTS_PATH = "/dashboard/contracts";
@@ -307,8 +308,7 @@ export async function terminateContractAction(
       rooms!contracts_room_id_fkey(
         room_number,
         buildings!rooms_building_id_fkey(name)
-      ),
-      zalo_room_links(id, zalo_user_id)
+      )
     `)
     .eq("id", contractId)
     .eq("account_id", user.id)
@@ -317,6 +317,20 @@ export async function terminateContractAction(
 
   if (!contract) {
     return { success: false, message: "Không tìm thấy hợp đồng có thể kết thúc." };
+  }
+
+  const admin = createAdminClient();
+  const { data: zaloLinks, error: linksError } = await admin
+    .from("zalo_room_links")
+    .select("id, zalo_user_id")
+    .eq("contract_id", contractId)
+    .eq("account_id", user.id);
+
+  if (linksError) {
+    logWarning("contract_termination_zalo_links_lookup_failed", {
+      contractId,
+      error: linksError.message,
+    });
   }
 
   const { data, error } = await supabase
@@ -332,11 +346,11 @@ export async function terminateContractAction(
     return { success: false, message: "Không thể kết thúc hợp đồng." };
   }
 
-  const zaloLinks = contract.zalo_room_links ?? [];
+  const linkedZaloAccounts = zaloLinks ?? [];
   let notificationFailed = false;
   let unlinkFailed = false;
 
-  for (const link of zaloLinks) {
+  for (const link of linkedZaloAccounts) {
     const room = Array.isArray(contract.rooms)
       ? contract.rooms[0]
       : contract.rooms;
@@ -371,17 +385,25 @@ export async function terminateContractAction(
       });
     }
 
-    const { error: unlinkError } = await supabase
+  }
+
+  if (linkedZaloAccounts.length > 0) {
+    const { data: deletedLinks, error: unlinkError } = await admin
       .from("zalo_room_links")
       .delete()
-      .eq("id", link.id)
-      .eq("account_id", user.id);
-    if (unlinkError) {
+      .eq("contract_id", contractId)
+      .eq("account_id", user.id)
+      .select("id");
+    if (
+      unlinkError ||
+      (deletedLinks?.length ?? 0) !== linkedZaloAccounts.length
+    ) {
       unlinkFailed = true;
       logWarning("contract_termination_zalo_unlink_failed", {
         contractId,
-        linkId: link.id,
-        error: unlinkError.message,
+        expectedCount: linkedZaloAccounts.length,
+        deletedCount: deletedLinks?.length ?? 0,
+        error: unlinkError?.message ?? "Số liên kết đã xóa không khớp.",
       });
     }
   }
@@ -406,7 +428,7 @@ export async function terminateContractAction(
   }
   return {
     success: true,
-    message: zaloLinks.length
+    message: linkedZaloAccounts.length
       ? "Đã kết thúc hợp đồng, thông báo người thuê và gỡ liên kết Zalo."
       : "Đã kết thúc hợp đồng.",
   };
