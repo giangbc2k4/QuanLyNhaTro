@@ -365,14 +365,7 @@ function CreateContractModal({
               ...form,
               roomId: e.target.value,
               monthlyRent: room?.monthlyRent ?? 0,
-              openingReadings: Object.fromEntries(
-                (room?.meterServices ?? [])
-                  .filter((service) => service.suggestedReading !== null)
-                  .map((service) => [
-                    service.serviceId,
-                    service.suggestedReading as number,
-                  ])
-              ),
+              openingReadings: {},
             });
           }} className="form-input"><option value="">Chọn phòng</option>{availableRooms.map((room) => <option key={room.id} value={room.id}>P{room.number} · {room.buildingName}</option>)}</select></Field>
           <Field label="Ngày bắt đầu *"><input required type="date" value={form.startDate} onChange={(e) => changeStartDate(e.target.value)} className="form-input" /></Field>
@@ -405,8 +398,9 @@ function CreateContractModal({
                   Chỉ số bàn giao công tơ
                 </p>
                 <p className="mt-1 text-[10px] text-text-muted">
-                  Đây là số cũ dùng để tính hóa đơn đầu tiên. Hệ thống đã điền
-                  chỉ số gần nhất nếu phòng từng có dữ liệu.
+                  Đây là số cũ dùng để tính hóa đơn đầu tiên của hợp đồng mới.
+                  Hãy kiểm tra công tơ và nhập lại, không dùng tự động dữ liệu
+                  của hợp đồng trước.
                 </p>
               </div>
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -433,6 +427,13 @@ function CreateContractModal({
                       placeholder="Nhập chỉ số khi bàn giao"
                       className="form-input"
                     />
+                    {service.suggestedReading !== null && (
+                      <p className="mt-1 text-[10px] text-text-muted">
+                        Lịch sử gần nhất của phòng:{" "}
+                        {service.suggestedReading.toLocaleString("vi-VN")}{" "}
+                        {service.unit} — chỉ để đối chiếu.
+                      </p>
+                    )}
                   </Field>
                 ))}
               </div>

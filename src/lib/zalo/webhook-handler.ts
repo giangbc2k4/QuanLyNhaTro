@@ -828,7 +828,18 @@ async function processImage(
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
-      const previous = Number(previousValue?.current_reading ?? 0);
+      const { data: contractServiceOpening } = await admin
+        .from("contract_services")
+        .select("opening_reading")
+        .eq("id", service.id)
+        .eq("contract_id", link.contract_id)
+        .eq("account_id", link.account_id)
+        .maybeSingle();
+      const previous = Number(
+        previousValue?.current_reading ??
+          contractServiceOpening?.opening_reading ??
+          0
+      );
       if (reading.value < previous) continue;
       values.push({
         account_id: link.account_id,

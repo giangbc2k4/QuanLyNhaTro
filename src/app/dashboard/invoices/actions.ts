@@ -80,8 +80,13 @@ export async function createInvoiceAction(
     const [previousItemsResult, confirmedReadingsResult] = await Promise.all([
       supabase
         .from("invoice_items")
-        .select("source_contract_service_id, current_reading, created_at")
+        .select(`
+          source_contract_service_id, current_reading, created_at,
+          invoices!inner(contract_id, status)
+        `)
         .eq("account_id", user.id)
+        .eq("invoices.contract_id", input.contractId)
+        .neq("invoices.status", "cancelled")
         .in("source_contract_service_id", serviceIds)
         .not("current_reading", "is", null)
         .order("created_at", { ascending: false }),

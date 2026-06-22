@@ -30,7 +30,7 @@ export default async function ZaloPage() {
     supabase
       .from("zalo_room_links")
       .select(`
-        id, zalo_user_id, verified_at, created_at,
+        id, contract_id, zalo_user_id, verified_at, created_at,
         contracts!zalo_room_links_contract_id_fkey(
           contract_code, start_date, end_date, status,
           tenants!contracts_main_tenant_id_fkey(full_name, phone),
@@ -46,7 +46,7 @@ export default async function ZaloPage() {
     supabase
       .from("meter_reading_submissions")
       .select(`
-        id, zalo_user_id, billing_month, image_path, status, ai_provider,
+        id, contract_id, zalo_user_id, billing_month, image_path, status, ai_provider,
         ai_model, ai_payload, error_message, confirmed_at, created_at,
         rooms!meter_reading_submissions_room_id_fkey(
           room_number,
@@ -71,13 +71,13 @@ export default async function ZaloPage() {
     );
   }
 
-  const latestSubmissionByZalo = new Map<
+  const latestSubmissionByContract = new Map<
     string,
     { status: MeterSubmissionStatus; created_at: string }
   >();
   for (const submission of submissionsResult.data ?? []) {
-    if (!latestSubmissionByZalo.has(submission.zalo_user_id)) {
-      latestSubmissionByZalo.set(submission.zalo_user_id, {
+    if (!latestSubmissionByContract.has(submission.contract_id)) {
+      latestSubmissionByContract.set(submission.contract_id, {
         status: meterSubmissionStatus(submission.status),
         created_at: submission.created_at,
       });
@@ -99,7 +99,7 @@ export default async function ZaloPage() {
   );
   const signedImageBySubmission = new Map(signedImageEntries);
 
-  const submissionsByZalo = new Map<string, ZaloSubmissionView[]>();
+  const submissionsByContract = new Map<string, ZaloSubmissionView[]>();
   for (const submission of submissionsResult.data ?? []) {
     const room = Array.isArray(submission.rooms)
       ? submission.rooms[0]
@@ -163,9 +163,9 @@ export default async function ZaloPage() {
       confirmedAt: submission.confirmed_at,
       createdAt: submission.created_at,
     };
-    const history = submissionsByZalo.get(submission.zalo_user_id) ?? [];
+    const history = submissionsByContract.get(submission.contract_id) ?? [];
     history.push(view);
-    submissionsByZalo.set(submission.zalo_user_id, history);
+    submissionsByContract.set(submission.contract_id, history);
   }
 
   const links: ZaloLinkView[] = (linksResult.data ?? []).map((link) => {
@@ -187,7 +187,7 @@ export default async function ZaloPage() {
         ? room.buildings[0]
         : room.buildings
       : null;
-    const latestSubmission = latestSubmissionByZalo.get(link.zalo_user_id);
+    const latestSubmission = latestSubmissionByContract.get(link.contract_id);
     const contractServices = contract?.contract_services ?? [];
     const meterKinds = [
       ...new Set(
@@ -232,7 +232,7 @@ export default async function ZaloPage() {
       latestSubmissionStatus: latestSubmission?.status ?? null,
       latestSubmissionAt: latestSubmission?.created_at ?? null,
       meterKinds,
-      submissions: submissionsByZalo.get(link.zalo_user_id) ?? [],
+      submissions: submissionsByContract.get(link.contract_id) ?? [],
     };
   });
 

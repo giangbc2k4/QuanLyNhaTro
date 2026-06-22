@@ -51,8 +51,12 @@ export default async function InvoicesPage() {
       .order("created_at", { ascending: false }),
     supabase
       .from("invoice_items")
-      .select("source_contract_service_id, current_reading, created_at")
+      .select(`
+        source_contract_service_id, current_reading, created_at,
+        invoices!inner(status)
+      `)
       .eq("account_id", userId)
+      .neq("invoices.status", "cancelled")
       .not("source_contract_service_id", "is", null)
       .not("current_reading", "is", null)
       .order("created_at", { ascending: false }),
